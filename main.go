@@ -1,61 +1,48 @@
 package main
 
 import (
+	"exec"
+	"log"
 	"os"
-	"rand"
-	"time"
+	"syscall"
+	"unsafe"
 )
 
-type context struct {
-	options *options
-
-	c1 *context1
-	c2 *context2
-}
-
-type context1 struct {
-
-}
-
-type context2 struct {
-	eventSet *eventSet
-}
-
-type eventSet struct {
-
-}
-
-func (c *context) newContext1() *context1 {
-	return new(context1)
-}
-
-func (c *context) tunnelP2P() {
-	c.c2 = new(context2)
-	c.initInstance()
-}
-
-func (c *context) initInstance() {
-}
-
-func initRandomSeed() {
-	rand.Seed(time.Nanoseconds())
-}
-
-func initStatic() os.Error {
-	initRandomSeed()
-	return nil
-}
-
-func exitStatic() {
-}
-
 func main() {
-	var c context
-	if err := initStatic(); err == nil {
-		c.options = newOptions()
-		c.options.parseArgs()
-		c.options.initDev()
-		c.c1 = c.newContext1()
+	tun, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	if err != nil {
+		log.Fatalf("Can't open linux TUN device file: %v\n", err)
 	}
-	exitStatic()
+
+	ifr := make([]byte, 18)
+	copy(ifr, "tun0")
+	ifr[16] = 0x01
+	ifr[17] = 0x10
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(tun.Fd()),
+		uintptr(0x400454ca), uintptr(unsafe.Pointer(&ifr[0])))
+	if errno != 0 {
+		log.Fatalf("Failed to ioctl the TUN device: %v", os.Errno(errno))
+	}
+
+	cmd := exec.Command("ifconfig", "tun0", "192.168.7.1", "pointopoint",
+		"192.168.7.2", "up")
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Can't set tun0's address by ifconfig command: %v\n", err)
+	}
+
+	buf := make([]byte, 2048)
+	for {
+		nread, err := tun.Read(buf)
+		if err != nil {
+			log.Fatalf("Failed to read from TUN device: %v\n", err)
+		}
+
+		log.Printf("Read %d bytes from the TUN device.\n", nread)
+
+		_, err = tun.Write(buf[:nread])
+		if err != nil {
+			log.Fatalf("Failed to write to TUN device: %v\n", err)
+		}
+	}
 }
