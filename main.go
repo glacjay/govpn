@@ -1,48 +1,63 @@
 package main
 
 import (
-	"exec"
 	"log"
-	"os"
-	"syscall"
-	"unsafe"
 )
 
+type context struct {
+	options *options
+
+	eventSet *eventSet
+
+	linkSocket *linkSocket
+
+	c1 context1
+	c2 context2
+}
+
+type context1 struct {
+
+}
+
+type context2 struct {
+	frame frame
+}
+
+func (c *context) initContext1() {
+	// TODO clear c.c1
+}
+
+func (c *context) tunnelPointToPoint() {
+	// TODO clear c.c2
+	c.initInstance()
+}
+
+func (c *context) initInstance() {
+	c.doOptionWarnings()
+	c.eventSet = new(eventSet)
+	c.linkSocket = new(linkSocket)
+	c.c2.frame.finalizeOptions(c.options)
+}
+
+func (c *context) doOptionWarnings() {
+	o := c.options
+	if o.ce.localPort == GOVPN_PORT && o.ce.remotePort == GOVPN_PORT {
+		log.Printf("IMPORTANT: GoVPN's default port number is now %d, based on an offical port number assignment by IANA.  OpenVPN 2.0-beta16 and earlier used 5000 as the default port.", GOVPN_PORT)
+	}
+}
+
 func main() {
-	tun, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+	err := initStatic()
 	if err != nil {
-		log.Fatalf("Can't open linux TUN device file: %v\n", err)
+		log.Fatalf("Can't init statically: %v\n", err)
 	}
+	defer exitStatic()
 
-	ifr := make([]byte, 18)
-	copy(ifr, "tun0")
-	ifr[16] = 0x01
-	ifr[17] = 0x10
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(tun.Fd()),
-		uintptr(0x400454ca), uintptr(unsafe.Pointer(&ifr[0])))
-	if errno != 0 {
-		log.Fatalf("Failed to ioctl the TUN device: %v", os.Errno(errno))
-	}
-
-	cmd := exec.Command("ifconfig", "tun0", "192.168.7.1", "pointopoint",
-		"192.168.7.2", "up")
-	err = cmd.Run()
-	if err != nil {
-		log.Fatalf("Can't set tun0's address by ifconfig command: %v\n", err)
-	}
-
-	buf := make([]byte, 2048)
-	for {
-		nread, err := tun.Read(buf)
-		if err != nil {
-			log.Fatalf("Failed to read from TUN device: %v\n", err)
-		}
-
-		log.Printf("Read %d bytes from the TUN device.\n", nread)
-
-		_, err = tun.Write(buf[:nread])
-		if err != nil {
-			log.Fatalf("Failed to write to TUN device: %v\n", err)
-		}
-	}
+	c := new(context)
+	c.options = newOptions()
+	c.options.parseArgs()
+	c.options.postProcess()
+	log.Printf("%s.", titleString)
+	c.initContext1()
+	c.tunnelPointToPoint()
 }

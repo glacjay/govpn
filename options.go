@@ -3,99 +3,74 @@ package main
 import (
 	"log"
 	"os"
-	"path"
 	"strconv"
 )
 
-const MAX_PARAMS = 16
+const titleString = "GoVPN 0.1 i686-pc-linux-gnu built on ... someday"
 
-// pingRecvTimeoutAction
-const (
-	PING_UNDEF = iota
-	PING_EXIT
-	PING_RESTART
-)
+const MAX_PARAMS = 16
 
 type connectionEntry struct {
 	localPort  int
 	remotePort int
-	local      string
-	remote     string
+	local      []byte
+	remote     []byte
 }
 
 type options struct {
-	config string
-
 	ce connectionEntry
 
-	dev     string
-	devType string
-	devNode string
+	dev []byte
 
-	ifconfigLocal         string
-	ifconfigRemoteNetmask string
+	ifconfigLocal         []byte
+	ifconfigRemoteNetmask []byte
 
-	keepalivePing         int
-	keepaliveTimeout      int
-	pingSendTimeout       int
-	pingRecvTimeout       int
-	pingRecvTimeoutAction int
+	sndbuf int
+	rcvbuf int
 
-	tuntapOptions tuntapOptions
-
-	sendbuf int
-	recvbuf int
+	tunMtu        int
+	tunMtuDefined bool
+	linkMtu       int
 }
 
 func newOptions() *options {
 	o := new(options)
 	o.ce.localPort = GOVPN_PORT
 	o.ce.remotePort = GOVPN_PORT
-	o.sendbuf = 65536
-	o.recvbuf = 65536
-	o.tuntapOptions.txQueueLen = 100
-	o.keepalivePing = 10
-	o.keepaliveTimeout = 3 * o.keepalivePing
-	o.pingSendTimeout = o.keepalivePing
-	o.pingRecvTimeout = o.keepaliveTimeout
-	o.pingRecvTimeoutAction = PING_RESTART
+	o.sndbuf = 65536
+	o.rcvbuf = 65536
+	o.tunMtu = TUN_MTU_DEFAULT
+	o.linkMtu = LINK_MTU_DEFAULT
 	return o
 }
 
 func (o *options) parseArgs() {
-	if len(os.Args) < 1 {
+	args := os.Args
+	if len(args) < 1 {
 		usage()
 	}
-	if len(os.Args) == 2 && os.Args[1][:2] != "--" {
-		o.addOption([]string{"config", os.Args[1]})
-	} else {
-		for i := 1; i < len(os.Args); i++ {
-			p := make([]string, MAX_PARAMS)
-			p[0] = os.Args[i]
-			if p[0][:2] != "--" {
-				log.Printf("I'm trying to parse \"%s\" as an option parameter but I don't see a leading '--'.", p[0])
-			} else {
-				p[0] = p[0][2:]
-			}
-			var j int
-			for j = 1; j < MAX_PARAMS; j++ {
-				if i+j < len(os.Args) {
-					arg := os.Args[i+j]
-					if arg[:2] != "--" {
-						p[j] = arg
-					} else {
-						break
-					}
+	for i := 1; i < len(args); i++ {
+		p := make([]string, 0, MAX_PARAMS)
+		p = append(p, args[i])
+		if p[0][:2] != "--" {
+			log.Printf("I'm trying to parse '%s' as an option parameter but I don't see a leading '--'.", p[0])
+		} else {
+			p[0] = p[0][2:]
+		}
+		var j int
+		for j = 1; j < MAX_PARAMS; j++ {
+			if i+j < len(args) {
+				arg := args[i+j]
+				if arg[:2] != "--" {
+					p = append(p, arg)
+				} else {
+					break
 				}
 			}
-			p = p[:j]
-			o.addOption(p)
-			i += j - 1
 		}
+		o.addOption(p)
+		i += j - 1
 	}
-}
-
-func (o *options) readConfigFile(filename string) {
 }
 
 func (o *options) addOption(p []string) {
@@ -104,27 +79,18 @@ func (o *options) addOption(p []string) {
 		usage()
 	case "version":
 		usageVersion()
-	case "config":
-		if len(o.config) == 0 {
-			o.config = p[1]
-		}
-		o.readConfigFile(p[1])
 	case "dev":
-		o.dev = p[1]
-	case "dev-type":
-		o.devType = p[1]
-	case "dev-node":
-		o.devNode = p[1]
+		o.dev = []byte(p[1])
 	case "ifconfig":
 		if isValidIpOrDns(p[1]) && isValidIpOrDns(p[2]) {
-			o.ifconfigLocal = p[1]
-			o.ifconfigRemoteNetmask = p[2]
+			o.ifconfigLocal = []byte(p[1])
+			o.ifconfigRemoteNetmask = []byte(p[2])
 		} else {
 			log.Printf("ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
 	case "remote":
-		o.ce.remote = p[1]
+		o.ce.remote = []byte(p[1])
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !isValidIpv4Port(port) {
@@ -134,19 +100,48 @@ func (o *options) addOption(p []string) {
 			o.ce.remotePort = port
 		}
 	case "sndbuf":
-		o.sendbuf = positiveAtoi(p[1])
+		o.sndbuf = positiveAtoi(p[1])
 	case "rcvbuf":
-		o.recvbuf = positiveAtoi(p[1])
-	case "txqueuelen":
-		o.tuntapOptions.txQueueLen = positiveAtoi(p[1])
+		o.rcvbuf = positiveAtoi(p[1])
 	default:
 		log.Printf("unrecognized option or missing parameter(s): --%s.", p[0])
 	}
 }
 
-func (o *options) initDev() {
-	if len(o.dev) == 0 {
-		o.dev = path.Base(o.devNode)
+func (o *options) postProcess() {
+	o.postProcessMutate()
+	o.postProcessVerify()
+}
+
+func (o *options) postProcessMutate() {
+	o.postProcessMutateInvariant()
+}
+
+func (o *options) postProcessMutateInvariant() {
+	o.tunMtuDefined = true
+}
+
+func (o *options) postProcessVerify() {
+	o.postProcessVerifyCe(&o.ce)
+}
+
+func (o *options) postProcessVerifyCe(ce *connectionEntry) {
+	notNull(o.dev, "TUN/TAP device (--dev)")
+
+	if stringDefinedEqual(ce.local, ce.remote) &&
+		ce.localPort == ce.remotePort {
+		log.Fatalf("--remote and --local addresses are the same.")
+	}
+	if stringDefinedEqual(ce.remote, o.ifconfigLocal) ||
+		stringDefinedEqual(ce.remote, o.ifconfigRemoteNetmask) {
+		log.Fatalf("--remote address must be distinct from --ifconfig addresses.")
+	}
+	if stringDefinedEqual(ce.local, o.ifconfigLocal) ||
+		stringDefinedEqual(ce.local, o.ifconfigRemoteNetmask) {
+		log.Fatalf("--local address must be distinct from --ifconfig addresses.")
+	}
+	if stringDefinedEqual(o.ifconfigLocal, o.ifconfigRemoteNetmask) {
+		log.Fatalf("local and remote/netmask --ifconfig addresses must be different.")
 	}
 }
 
@@ -166,4 +161,17 @@ func positiveAtoi(str string) int {
 		i = 0
 	}
 	return i
+}
+
+func notNull(arg []byte, desc string) {
+	if arg == nil {
+		log.Fatalf("You must define %s.", desc)
+	}
+}
+
+func stringDefinedEqual(s1, s2 []byte) bool {
+	if s1 != nil && s2 != nil {
+		return string(s1) == string(s2)
+	}
+	return false
 }
