@@ -80,7 +80,7 @@ func (f *frame) print_(exit bool, prefix string) {
 	if len(prefix) > 0 {
 		prefix += " "
 	}
-	fn("%s[L:%d D:%d EF:%d EB:%d ET:%d EL:%d AF:%u/%d]\n",
+	fn("%s[L:%d D:%d EF:%d EB:%d ET:%d EL:%d AF:%d/%d]\n", prefix,
 		f.linkMtu, f.linkMtuDynamic, f.extraFrame, f.extraBuffer,
 		f.extraTun, f.extraLink, f.alignFlags, f.alignAdjust)
 }
@@ -91,4 +91,7 @@ func (f *frame) bufSize() int {
 
 func (f *frame) headroomBase() int {
 	return f.tunLinkDelta() + f.extraBuffer + f.extraLink
+}
+
+func (f *frame) initSocket(sock *linkSocket) {
 }

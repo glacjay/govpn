@@ -41,7 +41,8 @@ func (sock *linkSocket) initPhrase1(o *options, lsa *linkSocketAddr) {
 }
 
 func (sock *linkSocket) createSocket() {
-	conn, err := net.ListenUDP("udp", nil)
+	conn, err := net.ListenUDP("udp",
+		&net.UDPAddr{IP: nil, Port: sock.localPort})
 	if err != nil {
 		log.Fatalf("UDP: Cannot create UDP socket: %v.", err)
 	}
@@ -67,6 +68,32 @@ func (sock *linkSocket) resolveRemote() {
 		} else {
 			sock.info.lsa.actual = sock.info.lsa.remote
 		}
+	}
+}
+
+func (sock *linkSocket) initPhrase2(f *frame) {
+	f.initSocket(sock)
+	sock.setBuffers()
+	local := "[undef]"
+	if sock.info.lsa.local != nil {
+		local = sock.info.lsa.local.IP.String()
+	}
+	log.Printf("UDPv4 link local: %s", local)
+	actual := "[NULL]"
+	if sock.info.lsa.actual != nil {
+		actual = sock.info.lsa.actual.String()
+	}
+	log.Printf("UDPv4 link remote: %s", actual)
+}
+
+func (sock *linkSocket) setBuffers() {
+	err := sock.sd.SetReadBuffer(sock.rcvbuf)
+	if err != nil {
+		log.Printf("Set Receive Buffer failed: %v", err)
+	}
+	err = sock.sd.SetWriteBuffer(sock.sndbuf)
+	if err != nil {
+		log.Printf("Set Send Buffer failed: %v", err)
 	}
 }
 
