@@ -8,8 +8,6 @@ import (
 type context struct {
 	options *options
 
-	eventSet *eventSet
-
 	c1 context1
 	c2 context2
 }
@@ -42,7 +40,6 @@ func (c *context) tunnelPointToPoint() {
 
 func (c *context) initInstance() {
 	c.doOptionWarnings()
-	c.eventSet = new(eventSet)
 	c.c2.linkSocket = new(linkSocket)
 	c.c2.frame.finalizeOptions(c.options)
 	c.c2.buffers = newContextBuffers(&c.c2.frame)
@@ -98,12 +95,6 @@ func newContextBuffers(f *frame) *contextBuffers {
 }
 
 func main() {
-	err := initStatic()
-	if err != nil {
-		log.Fatalf("Can't init statically: %v\n", err)
-	}
-	defer exitStatic()
-
 	c := new(context)
 	c.options = newOptions()
 	c.options.parseArgs()
