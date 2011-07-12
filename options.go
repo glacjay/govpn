@@ -6,8 +6,6 @@ import (
 	"strconv"
 )
 
-const titleString = "GoVPN 0.1 i686-pc-linux-gnu built on ... someday"
-
 const MAX_PARAMS = 16
 
 type connectionEntry struct {
@@ -24,23 +22,12 @@ type options struct {
 
 	ifconfigLocal         []byte
 	ifconfigRemoteNetmask []byte
-
-	sndbuf int
-	rcvbuf int
-
-	tunMtu        int
-	tunMtuDefined bool
-	linkMtu       int
 }
 
 func newOptions() *options {
 	o := new(options)
 	o.ce.localPort = GOVPN_PORT
 	o.ce.remotePort = GOVPN_PORT
-	o.sndbuf = 65536
-	o.rcvbuf = 65536
-	o.tunMtu = TUN_MTU_DEFAULT
-	o.linkMtu = LINK_MTU_DEFAULT
 	return o
 }
 
@@ -99,26 +86,13 @@ func (o *options) addOption(p []string) {
 			}
 			o.ce.remotePort = port
 		}
-	case "sndbuf":
-		o.sndbuf = positiveAtoi(p[1])
-	case "rcvbuf":
-		o.rcvbuf = positiveAtoi(p[1])
 	default:
 		log.Printf("unrecognized option or missing parameter(s): --%s.", p[0])
 	}
 }
 
 func (o *options) postProcess() {
-	o.postProcessMutate()
 	o.postProcessVerify()
-}
-
-func (o *options) postProcessMutate() {
-	o.postProcessMutateInvariant()
-}
-
-func (o *options) postProcessMutateInvariant() {
-	o.tunMtuDefined = true
 }
 
 func (o *options) postProcessVerify() {

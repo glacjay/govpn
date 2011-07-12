@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"syscall"
 	"unsafe"
 )
@@ -32,8 +31,7 @@ type tuntap struct {
 	fd *os.File
 }
 
-func newTuntap(dev string, localParm, remoteParm []byte,
-localPublic, remotePublic *net.UDPAddr) *tuntap {
+func newTuntap(dev string, localParm, remoteParm []byte) *tuntap {
 	tt := new(tuntap)
 	tt.type_ = devTypeEnum(dev)
 
@@ -88,7 +86,7 @@ func (tt *tuntap) openNull() {
 	tt.actualName = "null"
 }
 
-func (tt *tuntap) doIfconfig(tunMtu int) {
+func (tt *tuntap) doIfconfig() {
 	if !tt.didIfconfigSetup {
 		return
 	}
@@ -100,11 +98,10 @@ func (tt *tuntap) doIfconfig(tunMtu int) {
 	var cmd *exec.Cmd
 	if tun {
 		cmd = exec.Command("/sbin/ifconfig", tt.actualName, local,
-			"pointopoint", remoteNetmask, "mtu",
-			strconv.Itoa(tunMtu))
+			"pointopoint", remoteNetmask, "mtu", "1500")
 	} else {
 		cmd = exec.Command("/sbin/ifconfig", tt.actualName, local,
-			"netmask", remoteNetmask, "mtu", strconv.Itoa(tunMtu))
+			"netmask", remoteNetmask, "mtu", "1500")
 	}
 	err := cmd.Run()
 	if err != nil {
