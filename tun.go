@@ -17,6 +17,10 @@ const (
 	DEV_TYPE_TAP
 )
 
+type tunPacket struct {
+	buf []byte
+}
+
 type tuntap struct {
 	type_ int
 
@@ -29,15 +33,18 @@ type tuntap struct {
 	remoteNetmask *net.UDPAddr
 
 	fd *os.File
+
+	queue chan *tunPacket
 }
 
 func newTuntap(dev string, localParm, remoteParm []byte) *tuntap {
 	tt := new(tuntap)
 	tt.type_ = devTypeEnum(dev)
+	tt.queue = make(chan *tunPacket, 1)
 
 	if localParm != nil && remoteParm != nil {
-		tt.local = getaddr(string(localParm), 0)
-		tt.remoteNetmask = getaddr(string(remoteParm), 0)
+		tt.local = getaddr(localParm, 0)
+		tt.remoteNetmask = getaddr(remoteParm, 0)
 		tt.didIfconfigSetup = true
 	}
 
@@ -121,6 +128,24 @@ func (tt *tuntap) isTunP2p() bool {
 		log.Fatalf("Error: problem with tun vs. tap setting.")
 	}
 	return tun
+}
+
+func (tt *tuntap) run() {
+	for {
+		buf := make([]byte, 4096)
+		nread, err := tt.fd.Read(buf)
+		if err != nil {
+			log.Fatalf("TUN/TAP: read failed: %v", err)
+		}
+		tt.queue <- &tunPacket{buf[:nread]}
+	}
+}
+
+func (tt *tuntap) write(buf []byte) {
+	_, err := tt.fd.Write(buf)
+	if err != nil {
+		log.Fatalf("TUN/TAP: write failed: %v", err)
+	}
 }
 
 func devTypeEnum(dev string) int {

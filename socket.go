@@ -8,49 +8,86 @@ import (
 
 const GOVPN_PORT = 1194
 
+type linkPacket struct {
+	buf  []byte
+	from *net.UDPAddr
+}
+
 type linkSocket struct {
-	localHost  string
+	localHost  []byte
 	localPort  int
-	remoteHost string
+	remoteHost []byte
 	remotePort int
 
 	local  *net.UDPAddr
 	remote *net.UDPAddr
 
-	sd *net.UDPConn
+	conn *net.UDPConn
 
-	connectionEstablished bool
+	queue chan *linkPacket
 }
 
-func (sock *linkSocket) initPhrase1(o *options) {
-	sock.localHost = string(o.ce.local)
-	sock.localPort = o.ce.localPort
-	sock.remoteHost = string(o.ce.remote)
-	sock.remotePort = o.ce.remotePort
+func newLinkSocket(o *options) *linkSocket {
+	s := new(linkSocket)
 
-	sock.createSocket()
-	sock.resolveBindLocal()
-	sock.resolveRemote()
+	s.localHost = o.ce.local
+	s.localPort = o.ce.localPort
+	s.remoteHost = o.ce.remote
+	s.remotePort = o.ce.remotePort
+
+	s.createSocket()
+	s.resolveBindLocal()
+	s.resolveRemote()
+
+	s.queue = make(chan *linkPacket, 1)
+
+	return s
 }
 
-func (sock *linkSocket) createSocket() {
+func (s *linkSocket) createSocket() {
 	conn, err := net.ListenUDP("udp",
-		&net.UDPAddr{IP: []byte(sock.localHost), Port: sock.localPort})
+		&net.UDPAddr{IP: s.localHost, Port: s.localPort})
 	if err != nil {
 		log.Fatalf("UDP: Cannot create UDP socket: %v.", err)
 	}
-	sock.sd = conn
+	s.conn = conn
 }
 
-func (sock *linkSocket) resolveBindLocal() {
-	if sock.local == nil {
-		sock.local = getaddr(sock.localHost, sock.localPort)
+func (s *linkSocket) resolveBindLocal() {
+	if s.local == nil {
+		s.local = getaddr(s.localHost, s.localPort)
 	}
 }
 
-func (sock *linkSocket) resolveRemote() {
-	if sock.remote == nil {
-		sock.remote = getaddr(sock.remoteHost, sock.remotePort)
+func (s *linkSocket) resolveRemote() {
+	if s.remoteHost != nil {
+		s.remote = getaddr(s.remoteHost, s.remotePort)
+	}
+}
+
+func (s *linkSocket) run() {
+	for {
+		buf := make([]byte, 4096)
+		nread, addr, err := s.conn.ReadFromUDP(buf)
+		if err != nil {
+			log.Fatalf("UDPv4: read failed: %v", err)
+		}
+		if s.remote == nil {
+			s.remote = addr
+		}
+		if s.remote.String() == addr.String() {
+			s.queue <- &linkPacket{buf[:nread], addr}
+		}
+	}
+}
+
+func (s *linkSocket) write(buf []byte) {
+	if s.remote == nil {
+		return
+	}
+	_, err := s.conn.WriteToUDP(buf, s.remote)
+	if err != nil {
+		log.Fatalf("UDPv4: write failed: %v", err)
 	}
 }
 
@@ -62,8 +99,8 @@ func isValidIpv4Port(port int) bool {
 	return port > 0 && port < 65536
 }
 
-func getaddr(host string, port int) *net.UDPAddr {
-	str := fmt.Sprintf("%s:%d", host, port)
+func getaddr(host []byte, port int) *net.UDPAddr {
+	str := fmt.Sprintf("%s:%d", string(host), port)
 	addr, err := net.ResolveUDPAddr("udp", str)
 	if err != nil {
 		log.Fatalf("RESOLVE: Cannot resolve host address %s: %v.", str, err)

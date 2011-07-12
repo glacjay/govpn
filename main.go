@@ -1,15 +1,22 @@
 package main
 
 func tunnelPointToPoint(o *options) {
-	sock := new(linkSocket)
-	sock.initPhrase1(o)
+	socket := newLinkSocket(o)
+	go socket.run()
 
 	tuntap := newTuntap(string(o.dev), o.ifconfigLocal,
 		o.ifconfigRemoteNetmask)
 	tuntap.openTun(string(o.dev))
 	tuntap.doIfconfig()
+	go tuntap.run()
 
 	for {
+		select {
+		case p := <-socket.queue:
+			tuntap.write(p.buf)
+		case p := <-tuntap.queue:
+			socket.write(p.buf)
+		}
 	}
 }
 
