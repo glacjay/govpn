@@ -24,7 +24,8 @@ type linkSocket struct {
 
 	conn *net.UDPConn
 
-	queue chan *linkPacket
+	in  chan *linkPacket
+	out chan []byte
 }
 
 func newLinkSocket(o *options) *linkSocket {
@@ -39,7 +40,8 @@ func newLinkSocket(o *options) *linkSocket {
 	s.resolveBindLocal()
 	s.resolveRemote()
 
-	s.queue = make(chan *linkPacket, 1)
+	s.in = make(chan *linkPacket, 1)
+	s.out = make(chan []byte, 1)
 
 	return s
 }
@@ -66,6 +68,11 @@ func (s *linkSocket) resolveRemote() {
 }
 
 func (s *linkSocket) run() {
+	go s.inLoop()
+	go s.outLoop()
+}
+
+func (s *linkSocket) inLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
@@ -76,18 +83,23 @@ func (s *linkSocket) run() {
 			s.remote = addr
 		}
 		if s.remote.String() == addr.String() {
-			s.queue <- &linkPacket{buf[:nread], addr}
+			s.in <- &linkPacket{buf[:nread], addr}
 		}
 	}
 }
 
-func (s *linkSocket) write(buf []byte) {
-	if s.remote == nil {
-		return
-	}
-	_, err := s.conn.WriteToUDP(buf, s.remote)
-	if err != nil {
-		log.Fatalf("UDPv4: write failed: %v", err)
+func (s *linkSocket) outLoop() {
+	for {
+		buf := <-s.out
+
+		if s.remote == nil {
+			continue
+		}
+
+		_, err := s.conn.WriteToUDP(buf, s.remote)
+		if err != nil {
+			log.Fatalf("UDPv4: write failed: %v", err)
+		}
 	}
 }
 

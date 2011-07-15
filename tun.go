@@ -34,19 +34,22 @@ type tuntap struct {
 
 	fd *os.File
 
-	queue chan *tunPacket
+	in  chan *tunPacket
+	out chan []byte
 }
 
 func newTuntap(dev string, localParm, remoteParm []byte) *tuntap {
 	tt := new(tuntap)
 	tt.type_ = devTypeEnum(dev)
-	tt.queue = make(chan *tunPacket, 1)
 
 	if localParm != nil && remoteParm != nil {
 		tt.local = getaddr(localParm, 0)
 		tt.remoteNetmask = getaddr(remoteParm, 0)
 		tt.didIfconfigSetup = true
 	}
+
+	tt.in = make(chan *tunPacket, 1)
+	tt.out = make(chan []byte, 1)
 
 	return tt
 }
@@ -131,20 +134,29 @@ func (tt *tuntap) isTunP2p() bool {
 }
 
 func (tt *tuntap) run() {
+	go tt.inLoop()
+	go tt.outLoop()
+}
+
+func (tt *tuntap) inLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, err := tt.fd.Read(buf)
 		if err != nil {
 			log.Fatalf("TUN/TAP: read failed: %v", err)
 		}
-		tt.queue <- &tunPacket{buf[:nread]}
+		tt.in <- &tunPacket{buf[:nread]}
 	}
 }
 
-func (tt *tuntap) write(buf []byte) {
-	_, err := tt.fd.Write(buf)
-	if err != nil {
-		log.Fatalf("TUN/TAP: write failed: %v", err)
+func (tt *tuntap) outLoop() {
+	for {
+		buf := <-tt.out
+
+		_, err := tt.fd.Write(buf)
+		if err != nil {
+			log.Fatalf("TUN/TAP: write failed: %v", err)
+		}
 	}
 }
 
