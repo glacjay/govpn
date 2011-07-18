@@ -5,8 +5,8 @@ func tunnelPointToPoint(o *options) {
 	socket.run()
 
 	tuntap := newTuntap(o)
-	tuntap.openTun()
-	tuntap.doIfconfig()
+	tuntap.open()
+	tuntap.ifconfig()
 	tuntap.run()
 
 	for {
