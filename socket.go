@@ -14,12 +14,6 @@ type linkPacket struct {
 }
 
 type linkSocket struct {
-	localHost  []byte
-	localPort  int
-	remoteHost []byte
-	remotePort int
-
-	local  *net.UDPAddr
 	remote *net.UDPAddr
 
 	conn *net.UDPConn
@@ -30,40 +24,27 @@ type linkSocket struct {
 
 func newLinkSocket(o *options) *linkSocket {
 	s := new(linkSocket)
-
-	s.localHost = o.ce.local
-	s.localPort = o.ce.localPort
-	s.remoteHost = o.ce.remote
-	s.remotePort = o.ce.remotePort
-
-	s.createSocket()
-	s.resolveBindLocal()
-	s.resolveRemote()
-
 	s.in = make(chan *linkPacket, 1)
 	s.out = make(chan []byte, 1)
+
+	s.createSocket(o)
+	s.resolveRemote(o)
 
 	return s
 }
 
-func (s *linkSocket) createSocket() {
+func (s *linkSocket) createSocket(o *options) {
 	conn, err := net.ListenUDP("udp",
-		&net.UDPAddr{IP: s.localHost, Port: s.localPort})
+		&net.UDPAddr{IP: o.ce.localHost, Port: o.ce.localPort})
 	if err != nil {
 		log.Fatalf("UDP: Cannot create UDP socket: %v.", err)
 	}
 	s.conn = conn
 }
 
-func (s *linkSocket) resolveBindLocal() {
-	if s.local == nil {
-		s.local = getaddr(s.localHost, s.localPort)
-	}
-}
-
-func (s *linkSocket) resolveRemote() {
-	if s.remoteHost != nil {
-		s.remote = getaddr(s.remoteHost, s.remotePort)
+func (s *linkSocket) resolveRemote(o *options) {
+	if o.ce.remoteHost != nil {
+		s.remote = getaddr(o.ce.remoteHost, o.ce.remotePort)
 	}
 }
 
@@ -91,11 +72,9 @@ func (s *linkSocket) inLoop() {
 func (s *linkSocket) outLoop() {
 	for {
 		buf := <-s.out
-
 		if s.remote == nil {
 			continue
 		}
-
 		_, err := s.conn.WriteToUDP(buf, s.remote)
 		if err != nil {
 			log.Fatalf("UDPv4: write failed: %v", err)

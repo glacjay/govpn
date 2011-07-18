@@ -4,9 +4,8 @@ func tunnelPointToPoint(o *options) {
 	socket := newLinkSocket(o)
 	socket.run()
 
-	tuntap := newTuntap(string(o.dev), o.ifconfigLocal,
-		o.ifconfigRemoteNetmask)
-	tuntap.openTun(string(o.dev))
+	tuntap := newTuntap(o)
+	tuntap.openTun()
 	tuntap.doIfconfig()
 	tuntap.run()
 

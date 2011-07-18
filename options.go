@@ -9,19 +9,17 @@ import (
 const MAX_PARAMS = 16
 
 type connectionEntry struct {
+	localHost  []byte
 	localPort  int
+	remoteHost []byte
 	remotePort int
-	local      []byte
-	remote     []byte
 }
 
 type options struct {
 	ce connectionEntry
 
-	dev []byte
-
-	ifconfigLocal         []byte
-	ifconfigRemoteNetmask []byte
+	ifconfigAddress []byte
+	ifconfigNetmask []byte
 }
 
 func newOptions() *options {
@@ -66,18 +64,16 @@ func (o *options) addOption(p []string) {
 		usage()
 	case "version":
 		usageVersion()
-	case "dev":
-		o.dev = []byte(p[1])
 	case "ifconfig":
 		if isValidIpOrDns(p[1]) && isValidIpOrDns(p[2]) {
-			o.ifconfigLocal = []byte(p[1])
-			o.ifconfigRemoteNetmask = []byte(p[2])
+			o.ifconfigAddress = []byte(p[1])
+			o.ifconfigNetmask = []byte(p[2])
 		} else {
 			log.Printf("ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
 	case "remote":
-		o.ce.remote = []byte(p[1])
+		o.ce.remoteHost = []byte(p[1])
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !isValidIpv4Port(port) {
@@ -100,21 +96,19 @@ func (o *options) postProcessVerify() {
 }
 
 func (o *options) postProcessVerifyCe(ce *connectionEntry) {
-	notNull(o.dev, "TUN/TAP device (--dev)")
-
-	if stringDefinedEqual(ce.local, ce.remote) &&
+	if stringDefinedEqual(ce.localHost, ce.remoteHost) &&
 		ce.localPort == ce.remotePort {
 		log.Fatalf("--remote and --local addresses are the same.")
 	}
-	if stringDefinedEqual(ce.remote, o.ifconfigLocal) ||
-		stringDefinedEqual(ce.remote, o.ifconfigRemoteNetmask) {
+	if stringDefinedEqual(ce.remoteHost, o.ifconfigAddress) ||
+		stringDefinedEqual(ce.remoteHost, o.ifconfigNetmask) {
 		log.Fatalf("--remote address must be distinct from --ifconfig addresses.")
 	}
-	if stringDefinedEqual(ce.local, o.ifconfigLocal) ||
-		stringDefinedEqual(ce.local, o.ifconfigRemoteNetmask) {
+	if stringDefinedEqual(ce.localHost, o.ifconfigAddress) ||
+		stringDefinedEqual(ce.localHost, o.ifconfigNetmask) {
 		log.Fatalf("--local address must be distinct from --ifconfig addresses.")
 	}
-	if stringDefinedEqual(o.ifconfigLocal, o.ifconfigRemoteNetmask) {
+	if stringDefinedEqual(o.ifconfigAddress, o.ifconfigNetmask) {
 		log.Fatalf("local and remote/netmask --ifconfig addresses must be different.")
 	}
 }
