@@ -14,7 +14,8 @@ type linkPacket struct {
 }
 
 type linkSocket struct {
-	remote *net.UDPAddr
+	remote    *net.UDPAddr
+	connected bool
 
 	conn *net.UDPConn
 
@@ -63,11 +64,16 @@ func (s *linkSocket) inLoop() {
 		if s.remote == nil {
 			s.remote = addr
 		}
-		if s.remote.String() == addr.String() {
-			s.in <- &linkPacket{buf[:nread], addr}
-		} else {
+		if s.remote.String() != addr.String() {
 			log.Printf("TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), s.remote.String())
+			continue
 		}
+		if !s.connected {
+			s.connected = true
+			log.Printf("Peer Connection Initiated with %s", addr.String())
+		}
+
+		s.in <- &linkPacket{buf[:nread], addr}
 	}
 }
 
