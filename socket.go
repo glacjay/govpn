@@ -65,6 +65,8 @@ func (s *linkSocket) inLoop() {
 		}
 		if s.remote.String() == addr.String() {
 			s.in <- &linkPacket{buf[:nread], addr}
+		} else {
+			log.Printf("TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), s.remote.String())
 		}
 	}
 }
