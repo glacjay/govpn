@@ -4,6 +4,7 @@ TARG = govpn_$(GOOS)
 
 GOFILES = \
 	main.go \
+	occ.go \
 	options.go \
 	socket.go \
 	tun.go \

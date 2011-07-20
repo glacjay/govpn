@@ -18,14 +18,14 @@ type tuntap struct {
 
 	fd *os.File
 
-	in  chan *tunPacket
-	out chan []byte
+	out chan *tunPacket
+	in  chan []byte
 }
 
 func newTuntap(o *options) *tuntap {
 	tt := new(tuntap)
-	tt.in = make(chan *tunPacket, 1)
-	tt.out = make(chan []byte, 1)
+	tt.out = make(chan *tunPacket, 1)
+	tt.in = make(chan []byte, 1)
 
 	if o.ifconfigAddress != nil && o.ifconfigNetmask != nil {
 		tt.address = getaddr(o.ifconfigAddress, 0)
@@ -42,20 +42,20 @@ func (tt *tuntap) run() {
 	go tt.outLoop()
 }
 
-func (tt *tuntap) inLoop() {
+func (tt *tuntap) outLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, err := tt.fd.Read(buf)
 		if err != nil {
 			log.Fatalf("TUN/TAP: read failed: %v", err)
 		}
-		tt.in <- &tunPacket{buf[:nread]}
+		tt.out <- &tunPacket{buf[:nread]}
 	}
 }
 
-func (tt *tuntap) outLoop() {
+func (tt *tuntap) inLoop() {
 	for {
-		buf := <-tt.out
+		buf := <-tt.in
 		_, err := tt.fd.Write(buf)
 		if err != nil {
 			log.Fatalf("TUN/TAP: write failed: %v", err)

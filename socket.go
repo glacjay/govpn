@@ -19,14 +19,14 @@ type socket struct {
 
 	conn *net.UDPConn
 
-	in  chan *sockPacket
-	out chan []byte
+	out chan *sockPacket
+	in  chan []byte
 }
 
 func newSocket(o *options) *socket {
 	s := new(socket)
-	s.in = make(chan *sockPacket, 1)
-	s.out = make(chan []byte, 1)
+	s.out = make(chan *sockPacket, 1)
+	s.in = make(chan []byte, 1)
 
 	s.createSocket(o)
 	s.resolveRemote(o)
@@ -54,7 +54,7 @@ func (s *socket) run() {
 	go s.outLoop()
 }
 
-func (s *socket) inLoop() {
+func (s *socket) outLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
@@ -73,13 +73,13 @@ func (s *socket) inLoop() {
 			log.Printf("Peer Connection Initiated with %s", addr.String())
 		}
 
-		s.in <- &sockPacket{buf[:nread], addr}
+		s.out <- &sockPacket{buf[:nread], addr}
 	}
 }
 
-func (s *socket) outLoop() {
+func (s *socket) inLoop() {
 	for {
-		buf := <-s.out
+		buf := <-s.in
 		if s.remote == nil {
 			continue
 		}

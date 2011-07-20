@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 	"os"
 	"strconv"
 )
@@ -20,12 +21,15 @@ type options struct {
 
 	ifconfigAddress []byte
 	ifconfigNetmask []byte
+
+	occ *occ
 }
 
 func newOptions() *options {
 	o := new(options)
 	o.ce.localPort = GOVPN_PORT
 	o.ce.remotePort = GOVPN_PORT
+	o.occ = newOCC(o)
 	return o
 }
 
@@ -82,6 +86,8 @@ func (o *options) addOption(p []string) {
 			}
 			o.ce.remotePort = port
 		}
+	case "disable-occ":
+		o.occ.request = false
 	default:
 		log.Printf("unrecognized option or missing parameter(s): --%s.", p[0])
 	}
@@ -113,6 +119,19 @@ func (o *options) postProcessVerifyCe(ce *connectionEntry) {
 	}
 }
 
+func (o *options) optionsString() string {
+	out := "V4"
+	if o.ifconfigAddress != nil {
+		out += ",ifconfig " + o.ifconfigOptionsString()
+	}
+	return out
+}
+
+func (o *options) ifconfigOptionsString() string {
+	return getNetworkIP(o.ifconfigAddress, o.ifconfigNetmask) + " " +
+		string(o.ifconfigNetmask)
+}
+
 func usage() {
 	log.Printf("Usage: ...\n")
 	os.Exit(1)
@@ -142,4 +161,13 @@ func stringDefinedEqual(s1, s2 []byte) bool {
 		return string(s1) == string(s2)
 	}
 	return false
+}
+
+func getNetworkIP(address, netmask []byte) string {
+	addr := net.ParseIP(string(address))
+	mask := net.ParseIP(string(netmask))
+	for i := 0; i < len(addr); i++ {
+		addr[i] &= mask[i]
+	}
+	return addr.String()
 }
