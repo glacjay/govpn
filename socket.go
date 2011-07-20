@@ -8,24 +8,24 @@ import (
 
 const GOVPN_PORT = 1194
 
-type linkPacket struct {
+type sockPacket struct {
 	buf  []byte
 	from *net.UDPAddr
 }
 
-type linkSocket struct {
+type socket struct {
 	remote    *net.UDPAddr
 	connected bool
 
 	conn *net.UDPConn
 
-	in  chan *linkPacket
+	in  chan *sockPacket
 	out chan []byte
 }
 
-func newLinkSocket(o *options) *linkSocket {
-	s := new(linkSocket)
-	s.in = make(chan *linkPacket, 1)
+func newSocket(o *options) *socket {
+	s := new(socket)
+	s.in = make(chan *sockPacket, 1)
 	s.out = make(chan []byte, 1)
 
 	s.createSocket(o)
@@ -34,7 +34,7 @@ func newLinkSocket(o *options) *linkSocket {
 	return s
 }
 
-func (s *linkSocket) createSocket(o *options) {
+func (s *socket) createSocket(o *options) {
 	conn, err := net.ListenUDP("udp",
 		&net.UDPAddr{IP: o.ce.localHost, Port: o.ce.localPort})
 	if err != nil {
@@ -43,18 +43,18 @@ func (s *linkSocket) createSocket(o *options) {
 	s.conn = conn
 }
 
-func (s *linkSocket) resolveRemote(o *options) {
+func (s *socket) resolveRemote(o *options) {
 	if o.ce.remoteHost != nil {
 		s.remote = getaddr(o.ce.remoteHost, o.ce.remotePort)
 	}
 }
 
-func (s *linkSocket) run() {
+func (s *socket) run() {
 	go s.inLoop()
 	go s.outLoop()
 }
 
-func (s *linkSocket) inLoop() {
+func (s *socket) inLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
@@ -73,11 +73,11 @@ func (s *linkSocket) inLoop() {
 			log.Printf("Peer Connection Initiated with %s", addr.String())
 		}
 
-		s.in <- &linkPacket{buf[:nread], addr}
+		s.in <- &sockPacket{buf[:nread], addr}
 	}
 }
 
-func (s *linkSocket) outLoop() {
+func (s *socket) outLoop() {
 	for {
 		buf := <-s.out
 		if s.remote == nil {
@@ -90,11 +90,11 @@ func (s *linkSocket) outLoop() {
 	}
 }
 
-func isValidIpOrDns(addr string) bool {
+func validHost(addr string) bool {
 	return net.ParseIP(addr) != nil
 }
 
-func isValidIpv4Port(port int) bool {
+func validPort(port int) bool {
 	return port > 0 && port < 65536
 }
 

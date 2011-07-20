@@ -65,7 +65,7 @@ func (o *options) addOption(p []string) {
 	case "version":
 		usageVersion()
 	case "ifconfig":
-		if isValidIpOrDns(p[1]) && isValidIpOrDns(p[2]) {
+		if validHost(p[1]) && validHost(p[2]) {
 			o.ifconfigAddress = []byte(p[1])
 			o.ifconfigNetmask = []byte(p[2])
 		} else {
@@ -76,7 +76,7 @@ func (o *options) addOption(p []string) {
 		o.ce.remoteHost = []byte(p[1])
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
-			if err != nil || !isValidIpv4Port(port) {
+			if err != nil || !validPort(port) {
 				log.Printf("remote: port number associated with host %s is out of range.", p[1])
 				return
 			}

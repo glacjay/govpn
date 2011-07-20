@@ -1,7 +1,7 @@
 package main
 
-func tunnelPointToPoint(o *options) {
-	socket := newLinkSocket(o)
+func tunnelP2P(o *options) {
+	socket := newSocket(o)
 	socket.run()
 
 	tuntap := newTuntap(o)
@@ -24,5 +24,5 @@ func main() {
 	o.parseArgs()
 	o.postProcess()
 
-	tunnelPointToPoint(o)
+	tunnelP2P(o)
 }
