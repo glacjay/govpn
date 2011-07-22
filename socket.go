@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"github.com/glacjay/govpn/utils"
 	"log"
 	"net"
 )
@@ -45,7 +45,7 @@ func (s *socket) createSocket(o *options) {
 
 func (s *socket) resolveRemote(o *options) {
 	if o.ce.remoteHost != nil {
-		s.remote = getaddr(o.ce.remoteHost, o.ce.remotePort)
+		s.remote = utils.GetAddress(o.ce.remoteHost, o.ce.remotePort)
 	}
 }
 
@@ -88,21 +88,4 @@ func (s *socket) inLoop() {
 			log.Fatalf("UDPv4: write failed: %v", err)
 		}
 	}
-}
-
-func validHost(addr string) bool {
-	return net.ParseIP(addr) != nil
-}
-
-func validPort(port int) bool {
-	return port > 0 && port < 65536
-}
-
-func getaddr(host []byte, port int) *net.UDPAddr {
-	str := fmt.Sprintf("%s:%d", string(host), port)
-	addr, err := net.ResolveUDPAddr("udp", str)
-	if err != nil {
-		log.Fatalf("RESOLVE: Cannot resolve host address %s: %v.", str, err)
-	}
-	return addr
 }

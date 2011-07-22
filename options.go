@@ -1,8 +1,8 @@
 package main
 
 import (
+	"github.com/glacjay/govpn/utils"
 	"log"
-	"net"
 	"os"
 	"strconv"
 )
@@ -69,7 +69,7 @@ func (o *options) addOption(p []string) {
 	case "version":
 		usageVersion()
 	case "ifconfig":
-		if validHost(p[1]) && validHost(p[2]) {
+		if utils.IsValidHost(p[1]) && utils.IsValidHost(p[2]) {
 			o.ifconfigAddress = []byte(p[1])
 			o.ifconfigNetmask = []byte(p[2])
 		} else {
@@ -80,7 +80,7 @@ func (o *options) addOption(p []string) {
 		o.ce.remoteHost = []byte(p[1])
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
-			if err != nil || !validPort(port) {
+			if err != nil || !utils.IsValidPort(port) {
 				log.Printf("remote: port number associated with host %s is out of range.", p[1])
 				return
 			}
@@ -102,19 +102,19 @@ func (o *options) postProcessVerify() {
 }
 
 func (o *options) postProcessVerifyCe(ce *connectionEntry) {
-	if stringDefinedEqual(ce.localHost, ce.remoteHost) &&
+	if utils.StringDefinedEqual(ce.localHost, ce.remoteHost) &&
 		ce.localPort == ce.remotePort {
 		log.Fatalf("--remote and --local addresses are the same.")
 	}
-	if stringDefinedEqual(ce.remoteHost, o.ifconfigAddress) ||
-		stringDefinedEqual(ce.remoteHost, o.ifconfigNetmask) {
+	if utils.StringDefinedEqual(ce.remoteHost, o.ifconfigAddress) ||
+		utils.StringDefinedEqual(ce.remoteHost, o.ifconfigNetmask) {
 		log.Fatalf("--remote address must be distinct from --ifconfig addresses.")
 	}
-	if stringDefinedEqual(ce.localHost, o.ifconfigAddress) ||
-		stringDefinedEqual(ce.localHost, o.ifconfigNetmask) {
+	if utils.StringDefinedEqual(ce.localHost, o.ifconfigAddress) ||
+		utils.StringDefinedEqual(ce.localHost, o.ifconfigNetmask) {
 		log.Fatalf("--local address must be distinct from --ifconfig addresses.")
 	}
-	if stringDefinedEqual(o.ifconfigAddress, o.ifconfigNetmask) {
+	if utils.StringDefinedEqual(o.ifconfigAddress, o.ifconfigNetmask) {
 		log.Fatalf("local and remote/netmask --ifconfig addresses must be different.")
 	}
 }
@@ -128,7 +128,7 @@ func (o *options) optionsString() string {
 }
 
 func (o *options) ifconfigOptionsString() string {
-	return getNetworkIP(o.ifconfigAddress, o.ifconfigNetmask) + " " +
+	return utils.GetNetwork(o.ifconfigAddress, o.ifconfigNetmask) + " " +
 		string(o.ifconfigNetmask)
 }
 
@@ -140,34 +140,4 @@ func usage() {
 func usageVersion() {
 	log.Printf("Version: ...\n")
 	os.Exit(1)
-}
-
-func positiveAtoi(str string) int {
-	i, err := strconv.Atoi(str)
-	if err != nil || i < 0 {
-		i = 0
-	}
-	return i
-}
-
-func notNull(arg []byte, desc string) {
-	if arg == nil {
-		log.Fatalf("You must define %s.", desc)
-	}
-}
-
-func stringDefinedEqual(s1, s2 []byte) bool {
-	if s1 != nil && s2 != nil {
-		return string(s1) == string(s2)
-	}
-	return false
-}
-
-func getNetworkIP(address, netmask []byte) string {
-	addr := net.ParseIP(string(address))
-	mask := net.ParseIP(string(netmask))
-	for i := 0; i < len(addr); i++ {
-		addr[i] &= mask[i]
-	}
-	return addr.String()
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/glacjay/govpn/utils"
 	"log"
 	"net"
 	"os"
@@ -28,8 +29,8 @@ func newTuntap(o *options) *tuntap {
 	tt.in = make(chan []byte, 1)
 
 	if o.ifconfigAddress != nil && o.ifconfigNetmask != nil {
-		tt.address = getaddr(o.ifconfigAddress, 0)
-		tt.netmask = getaddr(o.ifconfigNetmask, 0)
+		tt.address = utils.GetAddress(o.ifconfigAddress, 0)
+		tt.netmask = utils.GetAddress(o.ifconfigNetmask, 0)
 	} else {
 		log.Fatalf("Must specify TAP device's IP and netmask.")
 	}
