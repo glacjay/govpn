@@ -1,6 +1,6 @@
 include $(GOROOT)/src/Make.inc
 
-TARG = github.com/glacjay/govpn/utils
+TARG = govpn/utils
 
 GOFILES = \
 	utils.go \

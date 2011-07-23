@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/glacjay/govpn/utils"
+	"govpn/utils"
 	"log"
 	"net"
 )
