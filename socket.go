@@ -71,6 +71,7 @@ func (s *socket) outLoop() {
 		if !s.connected {
 			s.connected = true
 			log.Printf("Peer Connection Initiated with %s", addr.String())
+			log.Printf("Initialization Sequence Completed.")
 		}
 
 		s.out <- &sockPacket{buf[:nread], addr}
