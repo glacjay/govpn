@@ -22,14 +22,14 @@ type options struct {
 	ifconfigAddress []byte
 	ifconfigNetmask []byte
 
-	occ *occ
+	occ bool
 }
 
 func newOptions() *options {
 	o := new(options)
 	o.ce.localPort = GOVPN_PORT
 	o.ce.remotePort = GOVPN_PORT
-	o.occ = newOCC(o)
+	o.occ = true
 	return o
 }
 
@@ -87,7 +87,7 @@ func (o *options) addOption(p []string) {
 			o.ce.remotePort = port
 		}
 	case "disable-occ":
-		o.occ.request = false
+		o.occ = false
 	default:
 		log.Printf("unrecognized option or missing parameter(s): --%s.", p[0])
 	}

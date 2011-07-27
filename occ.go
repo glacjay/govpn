@@ -16,7 +16,7 @@ const (
 	OCC_REPLY   = 1
 )
 
-type occ struct {
+type occStruct struct {
 	request bool
 
 	localString  string
@@ -26,18 +26,18 @@ type occ struct {
 	out  chan<- []byte
 }
 
-func newOCC(o *options) *occ {
-	occ := new(occ)
-	occ.request = true
+func newOCCStruct(o *options) *occStruct {
+	occ := new(occStruct)
+	occ.request = o.occ
 	occ.stop = make(chan bool, 1)
 	return occ
 }
 
-func (occ *occ) run() {
+func (occ *occStruct) run() {
 	go occ.outLoop()
 }
 
-func (occ *occ) outLoop() {
+func (occ *occStruct) outLoop() {
 	for i := 0; i < 12; i++ {
 		select {
 		case _ = <-occ.stop:
@@ -48,14 +48,14 @@ func (occ *occ) outLoop() {
 	}
 }
 
-func (occ *occ) reqMsg() []byte {
+func (occ *occStruct) reqMsg() []byte {
 	msg := make([]byte, 17)
 	copy(msg, occMagic[:])
 	msg[16] = OCC_REQUEST
 	return msg
 }
 
-func (occ *occ) replyMsg() []byte {
+func (occ *occStruct) replyMsg() []byte {
 	msg := make([]byte, 18+len(occ.localString))
 	copy(msg, occMagic[:])
 	msg[16] = OCC_REPLY
@@ -64,7 +64,7 @@ func (occ *occ) replyMsg() []byte {
 	return msg
 }
 
-func (occ *occ) processReceivedMsg(msg []byte, out chan<- []byte) {
+func (occ *occStruct) processReceivedMsg(msg []byte, out chan<- []byte) {
 	msg = msg[16:]
 	switch msg[0] {
 	case OCC_REQUEST:
