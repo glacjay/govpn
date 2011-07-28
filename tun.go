@@ -12,21 +12,20 @@ type tunPacket struct {
 }
 
 type tuntap struct {
+	input  <-chan []byte
+	output chan<- []byte
+
+	fd         *os.File
 	actualName string
 
 	address *net.UDPAddr
 	netmask *net.UDPAddr
-
-	fd *os.File
-
-	out chan *tunPacket
-	in  chan []byte
 }
 
-func newTuntap(o *options) *tuntap {
+func newTuntap(o *options, input <-chan []byte, output chan<- []byte) *tuntap {
 	tt := new(tuntap)
-	tt.out = make(chan *tunPacket, 1)
-	tt.in = make(chan []byte, 1)
+	tt.input = input
+	tt.output = output
 
 	if o.ifconfigAddress != nil && o.ifconfigNetmask != nil {
 		tt.address = utils.GetAddress(o.ifconfigAddress, 0)
@@ -39,27 +38,27 @@ func newTuntap(o *options) *tuntap {
 }
 
 func (tt *tuntap) run() {
-	go tt.inLoop()
-	go tt.outLoop()
+	go tt.inputLoop()
+	go tt.outputLoop()
 }
 
-func (tt *tuntap) outLoop() {
+func (tt *tuntap) inputLoop() {
+	for {
+		buf := <-tt.input
+		_, err := tt.fd.Write(buf)
+		if err != nil {
+			e.Msg(e.DLinkErrors, "TUN/TAP: write failed: %v", err)
+		}
+	}
+}
+
+func (tt *tuntap) outputLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, err := tt.fd.Read(buf)
 		if err != nil {
 			e.Msg(e.DLinkErrors, "TUN/TAP: read failed: %v", err)
 		}
-		tt.out <- &tunPacket{buf[:nread]}
-	}
-}
-
-func (tt *tuntap) inLoop() {
-	for {
-		buf := <-tt.in
-		_, err := tt.fd.Write(buf)
-		if err != nil {
-			e.Msg(e.DLinkErrors, "TUN/TAP: write failed: %v", err)
-		}
+		tt.output <- buf[:nread]
 	}
 }

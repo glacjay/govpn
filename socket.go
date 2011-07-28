@@ -14,19 +14,19 @@ type sockPacket struct {
 }
 
 type socket struct {
-	remote    *net.UDPAddr
-	connected bool
+	input  <-chan []byte
+	output chan<- []byte
 
 	conn *net.UDPConn
 
-	out chan *sockPacket
-	in  chan []byte
+	remote    *net.UDPAddr
+	connected bool
 }
 
-func newSocket(o *options) *socket {
+func newSocket(o *options, input <-chan []byte, output chan<- []byte) *socket {
 	s := new(socket)
-	s.out = make(chan *sockPacket, 1)
-	s.in = make(chan []byte, 1)
+	s.input = input
+	s.output = output
 
 	s.createSocket(o)
 	s.resolveRemote(o)
@@ -50,11 +50,24 @@ func (s *socket) resolveRemote(o *options) {
 }
 
 func (s *socket) run() {
-	go s.inLoop()
-	go s.outLoop()
+	go s.inputLoop()
+	go s.outputLoop()
 }
 
-func (s *socket) outLoop() {
+func (s *socket) inputLoop() {
+	for {
+		buf := <-s.input
+		if s.remote == nil {
+			continue
+		}
+		_, err := s.conn.WriteToUDP(buf, s.remote)
+		if err != nil {
+			e.Msg(e.DLinkErrors, "UDPv4: write failed: %v", err)
+		}
+	}
+}
+
+func (s *socket) outputLoop() {
 	for {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
@@ -74,19 +87,6 @@ func (s *socket) outLoop() {
 			e.Msg(e.MInfo, "Initialization Sequence Completed.")
 		}
 
-		s.out <- &sockPacket{buf[:nread], addr}
-	}
-}
-
-func (s *socket) inLoop() {
-	for {
-		buf := <-s.in
-		if s.remote == nil {
-			continue
-		}
-		_, err := s.conn.WriteToUDP(buf, s.remote)
-		if err != nil {
-			e.Msg(e.DLinkErrors, "UDPv4: write failed: %v", err)
-		}
+		s.output <- buf[:nread]
 	}
 }

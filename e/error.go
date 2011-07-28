@@ -213,7 +213,7 @@ func checkDebugLevel(level uint) bool {
 func timeString(showUsec bool) string {
 	buf := time.LocalTime().Format("2006-01-02 15:04:05")
 	if showUsec {
-		buf += fmt.Sprintf(" %06d", (time.Nanoseconds()/1e3)%1e6)
+		buf += fmt.Sprintf(" us=%06d", (time.Nanoseconds()/1e3)%1e6)
 	}
 	return buf
 }

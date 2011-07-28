@@ -19,31 +19,38 @@ const (
 type occStruct struct {
 	request bool
 
+	stop   chan bool
+	output chan<- []byte
+
 	localString  string
 	remoteString string
-
-	stop chan bool
-	out  chan<- []byte
 }
 
-func newOCCStruct(o *options) *occStruct {
+func newOCCStruct(o *options, output chan<- []byte) *occStruct {
 	occ := new(occStruct)
 	occ.request = o.occ
 	occ.stop = make(chan bool, 1)
+	occ.output = output
+
+	occ.localString = o.optionsString()
+	e.Msg(e.MInfo, "Local Options String: '%s'", occ.localString)
+	occ.remoteString = o.optionsString()
+	e.Msg(e.MInfo, "Expected Remote Options String: '%s'", occ.remoteString)
+
 	return occ
 }
 
 func (occ *occStruct) run() {
-	go occ.outLoop()
+	go occ.outputLoop()
 }
 
-func (occ *occStruct) outLoop() {
+func (occ *occStruct) outputLoop() {
 	for i := 0; i < 12; i++ {
 		select {
 		case _ = <-occ.stop:
 			return
 		case _ = <-time.After(1e9 * 10):
-			occ.out <- occ.reqMsg()
+			occ.output <- occ.reqMsg()
 		}
 	}
 }
@@ -64,11 +71,11 @@ func (occ *occStruct) replyMsg() []byte {
 	return msg
 }
 
-func (occ *occStruct) processReceivedMsg(msg []byte, out chan<- []byte) {
+func (occ *occStruct) processReceivedMsg(msg []byte) {
 	msg = msg[16:]
 	switch msg[0] {
 	case OCC_REQUEST:
-		out <- occ.replyMsg()
+		occ.output <- occ.replyMsg()
 	case OCC_REPLY:
 		occ.stop <- true
 		remoteString := string(msg[1 : len(msg)-1])

@@ -32,6 +32,7 @@ func newOptions() *options {
 	o.ce.localPort = GOVPN_PORT
 	o.ce.remotePort = GOVPN_PORT
 	o.occ = true
+	o.verbosity = 1
 	return o
 }
 
