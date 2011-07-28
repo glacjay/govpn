@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"govpn/e"
 	"time"
 )
 
@@ -73,7 +73,7 @@ func (occ *occStruct) processReceivedMsg(msg []byte, out chan<- []byte) {
 		occ.stop <- true
 		remoteString := string(msg[1 : len(msg)-1])
 		if remoteString != occ.remoteString {
-			log.Printf("NOTE: Options consistency check may be skewed by version differences.")
+			e.Msg(e.DShowOCC, "NOTE: Options consistency check may be skewed by version differences.")
 			// TODO More detailed check
 		}
 	default:

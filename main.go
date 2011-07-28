@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"govpn/e"
 )
 
 func tunnelP2P(o *options) {
@@ -15,9 +15,9 @@ func tunnelP2P(o *options) {
 
 	occ := newOCCStruct(o)
 	occ.localString = o.optionsString()
-	log.Printf("Local Options String: '%s'", occ.localString)
+	e.Msg(e.MInfo, "Local Options String: '%s'", occ.localString)
 	occ.remoteString = o.optionsString()
-	log.Printf("Expected Remote Options String: '%s'", occ.remoteString)
+	e.Msg(e.MInfo, "Expected Remote Options String: '%s'", occ.remoteString)
 	occ.out = socket.in
 	occ.run()
 
@@ -37,8 +37,8 @@ func tunnelP2P(o *options) {
 
 func main() {
 	o := newOptions()
-	o.parseArgs()
+	o.parseArgs(e.MUsage)
 	o.postProcess()
-
+	e.SetDebugLevel(o.verbosity)
 	tunnelP2P(o)
 }

@@ -1,7 +1,7 @@
 include $(GOROOT)/src/Make.inc
 
 TARG = govpn_$(GOOS)
-DEPS = utils
+DEPS = e utils
 
 GOFILES = \
 	main.go \

@@ -1,8 +1,8 @@
 package main
 
 import (
+	"govpn/e"
 	"govpn/utils"
-	"log"
 	"os"
 	"strconv"
 )
@@ -23,6 +23,8 @@ type options struct {
 	ifconfigNetmask []byte
 
 	occ bool
+
+	verbosity uint
 }
 
 func newOptions() *options {
@@ -33,7 +35,7 @@ func newOptions() *options {
 	return o
 }
 
-func (o *options) parseArgs() {
+func (o *options) parseArgs(msglevel uint) {
 	args := os.Args
 	if len(args) < 1 {
 		usage()
@@ -42,7 +44,7 @@ func (o *options) parseArgs() {
 		p := make([]string, 0, MAX_PARAMS)
 		p = append(p, args[i])
 		if p[0][:2] != "--" {
-			log.Printf("I'm trying to parse '%s' as an option parameter but I don't see a leading '--'.", p[0])
+			e.Msg(msglevel, "I'm trying to parse '%s' as an option parameter but I don't see a leading '--'.", p[0])
 		} else {
 			p[0] = p[0][2:]
 		}
@@ -50,19 +52,19 @@ func (o *options) parseArgs() {
 		for j = 1; j < MAX_PARAMS; j++ {
 			if i+j < len(args) {
 				arg := args[i+j]
-				if arg[:2] != "--" {
+				if len(arg) < 2 || arg[:2] != "--" {
 					p = append(p, arg)
 				} else {
 					break
 				}
 			}
 		}
-		o.addOption(p)
+		o.addOption(p, msglevel)
 		i += j - 1
 	}
 }
 
-func (o *options) addOption(p []string) {
+func (o *options) addOption(p []string, msglevel uint) {
 	switch p[0] {
 	case "help":
 		usage()
@@ -73,7 +75,7 @@ func (o *options) addOption(p []string) {
 			o.ifconfigAddress = []byte(p[1])
 			o.ifconfigNetmask = []byte(p[2])
 		} else {
-			log.Printf("ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
+			e.Msg(msglevel, "ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
 	case "remote":
@@ -81,15 +83,17 @@ func (o *options) addOption(p []string) {
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !utils.IsValidPort(port) {
-				log.Printf("remote: port number associated with host %s is out of range.", p[1])
+				e.Msg(msglevel, "remote: port number associated with host %s is out of range.", p[1])
 				return
 			}
 			o.ce.remotePort = port
 		}
 	case "disable-occ":
 		o.occ = false
+	case "verb":
+		o.verbosity = uint(utils.PosAtoi(p[1]))
 	default:
-		log.Printf("unrecognized option or missing parameter(s): --%s.", p[0])
+		e.Msg(msglevel, "unrecognized option or missing parameter(s): --%s.", p[0])
 	}
 }
 
@@ -104,18 +108,18 @@ func (o *options) postProcessVerify() {
 func (o *options) postProcessVerifyCe(ce *connectionEntry) {
 	if utils.StringDefinedEqual(ce.localHost, ce.remoteHost) &&
 		ce.localPort == ce.remotePort {
-		log.Fatalf("--remote and --local addresses are the same.")
+		e.Msg(e.MUsage, "--remote and --local addresses are the same.")
 	}
 	if utils.StringDefinedEqual(ce.remoteHost, o.ifconfigAddress) ||
 		utils.StringDefinedEqual(ce.remoteHost, o.ifconfigNetmask) {
-		log.Fatalf("--remote address must be distinct from --ifconfig addresses.")
+		e.Msg(e.MUsage, "--remote address must be distinct from --ifconfig addresses.")
 	}
 	if utils.StringDefinedEqual(ce.localHost, o.ifconfigAddress) ||
 		utils.StringDefinedEqual(ce.localHost, o.ifconfigNetmask) {
-		log.Fatalf("--local address must be distinct from --ifconfig addresses.")
+		e.Msg(e.MUsage, "--local address must be distinct from --ifconfig addresses.")
 	}
 	if utils.StringDefinedEqual(o.ifconfigAddress, o.ifconfigNetmask) {
-		log.Fatalf("local and remote/netmask --ifconfig addresses must be different.")
+		e.Msg(e.MUsage, "local and remote/netmask --ifconfig addresses must be different.")
 	}
 }
 
@@ -133,11 +137,11 @@ func (o *options) ifconfigOptionsString() string {
 }
 
 func usage() {
-	log.Printf("Usage: ...\n")
+	e.Msg(e.MUsage, "Usage: ...\n")
 	os.Exit(1)
 }
 
 func usageVersion() {
-	log.Printf("Version: ...\n")
+	e.Msg(e.MInfo|e.MNoPrefix, "Version: ...\n")
 	os.Exit(1)
 }

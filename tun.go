@@ -1,8 +1,8 @@
 package main
 
 import (
+	"govpn/e"
 	"govpn/utils"
-	"log"
 	"net"
 	"os"
 )
@@ -32,7 +32,7 @@ func newTuntap(o *options) *tuntap {
 		tt.address = utils.GetAddress(o.ifconfigAddress, 0)
 		tt.netmask = utils.GetAddress(o.ifconfigNetmask, 0)
 	} else {
-		log.Fatalf("Must specify TAP device's IP and netmask.")
+		e.Msg(e.MUsage, "Must specify TAP device's IP and netmask.")
 	}
 
 	return tt
@@ -48,7 +48,7 @@ func (tt *tuntap) outLoop() {
 		buf := make([]byte, 4096)
 		nread, err := tt.fd.Read(buf)
 		if err != nil {
-			log.Fatalf("TUN/TAP: read failed: %v", err)
+			e.Msg(e.DLinkErrors, "TUN/TAP: read failed: %v", err)
 		}
 		tt.out <- &tunPacket{buf[:nread]}
 	}
@@ -59,7 +59,7 @@ func (tt *tuntap) inLoop() {
 		buf := <-tt.in
 		_, err := tt.fd.Write(buf)
 		if err != nil {
-			log.Fatalf("TUN/TAP: write failed: %v", err)
+			e.Msg(e.DLinkErrors, "TUN/TAP: write failed: %v", err)
 		}
 	}
 }

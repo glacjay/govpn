@@ -3,7 +3,7 @@ package main
 import (
 	"exec"
 	"fmt"
-	"log"
+	"govpn/e"
 	"os"
 )
 
@@ -19,26 +19,26 @@ func (tt *tuntap) open() {
 			dynamicOpened = true
 			break
 		}
-		log.Printf("Tried opening %s (failed).", tunName)
+		e.Msg(e.DReadWrite, "Tried opening %s (failed): %v.", tunName, err)
 	}
 	if !dynamicOpened {
-		log.Fatalf("Cannot allocate TUN/TAP device dynamically.")
+		e.Msg(e.MError, "Cannot allocate TUN/TAP device dynamically.")
 	}
 
 	tt.actualName = dynamicName
-	log.Printf("TUN/TAP device %s opened.", tt.actualName)
+	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tt.actualName)
 }
 
 func (tt *tuntap) ifconfig() {
 	cmd := exec.Command("/sbin/ifconfig", tt.actualName, "delete")
 	_ = cmd.Run()
-	log.Printf("NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
+	e.Msg(e.MInfo, "NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
 
 	cmd = exec.Command("/sbin/ifconfig", tt.actualName,
 		tt.address.IP.String(), "netmask",
 		tt.netmask.IP.String(), "mtu", "1500", "up")
 	err := cmd.Run()
 	if err != nil {
-		log.Fatalf("Mac OS X ifconfig failed: %v.", err)
+		e.Msg(e.MFatal, "Mac OS X ifconfig failed: %v.", err)
 	}
 }

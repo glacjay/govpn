@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"log"
+	"govpn/e"
 	"net"
 	"strconv"
 )
@@ -29,7 +29,7 @@ func PosAtoi(str string) int {
 
 func NotNull(arg []byte, what string) {
 	if arg == nil {
-		log.Fatalf("You must define %s.", what)
+		e.Msg(e.MUsage, "You must define %s.", what)
 	}
 }
 
@@ -54,7 +54,7 @@ func GetAddress(host []byte, port int) *net.UDPAddr {
 	str := fmt.Sprintf("%s:%d", string(host), port)
 	addr, err := net.ResolveUDPAddr("udp", str)
 	if err != nil {
-		log.Fatalf("RESOLVE: Cannot resolve host address %s: %v.", str, err)
+		e.Msg(e.MFatal, "RESOLVE: Cannot resolve host address %s: %v.", str, err)
 	}
 	return addr
 }

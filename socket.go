@@ -1,8 +1,8 @@
 package main
 
 import (
+	"govpn/e"
 	"govpn/utils"
-	"log"
 	"net"
 )
 
@@ -38,7 +38,7 @@ func (s *socket) createSocket(o *options) {
 	conn, err := net.ListenUDP("udp",
 		&net.UDPAddr{IP: o.ce.localHost, Port: o.ce.localPort})
 	if err != nil {
-		log.Fatalf("UDP: Cannot create UDP socket: %v.", err)
+		e.Msg(e.MErrorSock, "UDP: Cannot create UDP socket: %v.", err)
 	}
 	s.conn = conn
 }
@@ -59,19 +59,19 @@ func (s *socket) outLoop() {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Fatalf("UDPv4: read failed: %v", err)
+			e.Msg(e.DLinkErrors, "UDPv4: read failed: %v", err)
 		}
 		if s.remote == nil {
 			s.remote = addr
 		}
 		if s.remote.String() != addr.String() {
-			log.Printf("TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), s.remote.String())
+			e.Msg(e.DLinkErrors, "TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), s.remote.String())
 			continue
 		}
 		if !s.connected {
 			s.connected = true
-			log.Printf("Peer Connection Initiated with %s", addr.String())
-			log.Printf("Initialization Sequence Completed.")
+			e.Msg(e.MInfo, "Peer Connection Initiated with %s", addr.String())
+			e.Msg(e.MInfo, "Initialization Sequence Completed.")
 		}
 
 		s.out <- &sockPacket{buf[:nread], addr}
@@ -86,7 +86,7 @@ func (s *socket) inLoop() {
 		}
 		_, err := s.conn.WriteToUDP(buf, s.remote)
 		if err != nil {
-			log.Fatalf("UDPv4: write failed: %v", err)
+			e.Msg(e.DLinkErrors, "UDPv4: write failed: %v", err)
 		}
 	}
 }
