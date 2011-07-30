@@ -172,25 +172,21 @@ func xMsg(flags uint, m string) {
 }
 
 var (
-	msgwr      io.Writer
 	defaultOut io.Writer
 	defaultErr io.Writer
 )
 
 func init() {
-	msgwr = os.Stdout
 	defaultOut = os.Stdout
 	defaultErr = os.Stderr
 }
 
 func msgWr(flags uint) io.Writer {
-	wr := msgwr
-	if wr == nil {
-		if flags&(MFatal|MUsageSmall) > 0 {
-			wr = defaultErr
-		} else {
-			wr = defaultOut
-		}
+	var wr io.Writer
+	if flags&(MFatal|MUsageSmall) > 0 {
+		wr = defaultErr
+	} else {
+		wr = defaultOut
 	}
 	if wr == nil {
 		Exit(ExitOpenDebug)
