@@ -2,12 +2,11 @@ package main
 
 import (
 	"govpn/e"
-	"os/signal"
-	"os"
+	"govpn/sig"
 	"syscall"
 )
 
-func tunnelP2P(o *options) {
+func tunnelP2P(o *options) *sig.Signal {
 	fromSock := make(chan []byte, 10)
 	toSock := make(chan []byte, 10)
 	toTun := make(chan []byte, 10)
@@ -25,16 +24,19 @@ func tunnelP2P(o *options) {
 
 	go fromSockDispatch(occ, fromSock, toTun)
 
+	var s *sig.Signal
 	for {
-		select {
-		case sig := <-signal.Incoming:
-			s := sig.(os.UnixSignal)
-			if s == syscall.SIGTERM || s == syscall.SIGINT {
-				e.Msg(e.MInfo, "Received signal: %v", sig)
-				e.Exit(e.ExitGood)
-			}
+		s = <-sig.Signals
+		if s.Signo == syscall.SIGTERM || s.Signo == syscall.SIGINT {
+			break
 		}
 	}
+
+	occ.Stop()
+	tuntap.stop()
+	socket.stop()
+
+	return s
 }
 
 func fromSockDispatch(occ *occStruct, input <-chan []byte, output chan<- []byte) {
@@ -49,9 +51,22 @@ func fromSockDispatch(occ *occStruct, input <-chan []byte, output chan<- []byte)
 }
 
 func main() {
-	o := newOptions()
-	o.parseArgs(e.MUsage)
-	o.postProcess()
-	e.SetDebugLevel(o.verbosity)
-	tunnelP2P(o)
+	var s *sig.Signal
+	for {
+		o := newOptions()
+		o.parseArgs(e.MUsage)
+		o.postProcess()
+		e.SetDebugLevel(o.verbosity)
+
+		for {
+			s = tunnelP2P(o)
+			if s.Signo != syscall.SIGUSR1 {
+				break
+			}
+		}
+
+		if s.Signo != syscall.SIGHUP {
+			break
+		}
+	}
 }

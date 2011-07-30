@@ -90,3 +90,7 @@ func (s *socket) outputLoop() {
 		s.output <- buf[:nread]
 	}
 }
+
+func (s *socket) stop() {
+	s.conn.Close()
+}

@@ -55,6 +55,10 @@ func (occ *occStruct) outputLoop() {
 	}
 }
 
+func (occ *occStruct) Stop() {
+	occ.stop <- true
+}
+
 func (occ *occStruct) reqMsg() []byte {
 	msg := make([]byte, 17)
 	copy(msg, occMagic[:])
@@ -77,7 +81,7 @@ func (occ *occStruct) processReceivedMsg(msg []byte) {
 	case OCC_REQUEST:
 		occ.output <- occ.replyMsg()
 	case OCC_REPLY:
-		occ.stop <- true
+		occ.Stop()
 		remoteString := string(msg[1 : len(msg)-1])
 		if remoteString != occ.remoteString {
 			e.Msg(e.DShowOCC, "NOTE: Options consistency check may be skewed by version differences.")

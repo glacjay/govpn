@@ -62,3 +62,7 @@ func (tt *tuntap) outputLoop() {
 		tt.output <- buf[:nread]
 	}
 }
+
+func (tt *tuntap) stop() {
+	tt.fd.Close()
+}
