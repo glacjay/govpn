@@ -1,6 +1,6 @@
 include $(GOROOT)/src/Make.inc
 
-TARG = govpn_$(GOOS)
+TARG = govpn
 DEPS = e utils
 
 GOFILES = \
@@ -19,3 +19,5 @@ GOFILES_darwin = \
 GOFILES += $(GOFILES_$(GOOS))
 
 include $(GOROOT)/src/Make.cmd
+
+CLEANFILES += `find . -name '*.a'`
