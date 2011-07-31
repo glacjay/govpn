@@ -2,6 +2,7 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/opt"
 	"time"
 )
 
@@ -26,15 +27,15 @@ type occStruct struct {
 	remoteString string
 }
 
-func newOCCStruct(o *options, output chan<- []byte) *occStruct {
+func newOCCStruct(o *opt.Options, output chan<- []byte) *occStruct {
 	occ := new(occStruct)
-	occ.request = o.occ
+	occ.request = o.OCC
 	occ.stop = make(chan bool, 1)
 	occ.output = output
 
-	occ.localString = o.optionsString()
+	occ.localString = o.OptionsString()
 	e.Msg(e.MInfo, "Local Options String: '%s'", occ.localString)
-	occ.remoteString = o.optionsString()
+	occ.remoteString = o.OptionsString()
 	e.Msg(e.MInfo, "Expected Remote Options String: '%s'", occ.remoteString)
 
 	return occ

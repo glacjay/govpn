@@ -2,11 +2,12 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/opt"
 	"govpn/sig"
 	"syscall"
 )
 
-func tunnelP2P(o *options) *sig.Signal {
+func tunnelP2P(o *opt.Options) *sig.Signal {
 	fromSock := make(chan []byte, 10)
 	toSock := make(chan []byte, 10)
 	toTun := make(chan []byte, 10)
@@ -53,10 +54,8 @@ func fromSockDispatch(occ *occStruct, input <-chan []byte, output chan<- []byte)
 func main() {
 	var s *sig.Signal
 	for {
-		o := newOptions()
-		o.parseArgs(e.MUsage)
-		o.postProcess()
-		e.SetDebugLevel(o.verbosity)
+		o := opt.NewOptions()
+		e.SetDebugLevel(o.Verbosity)
 
 		for {
 			s = tunnelP2P(o)

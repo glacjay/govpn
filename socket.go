@@ -2,11 +2,10 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/opt"
 	"govpn/utils"
 	"net"
 )
-
-const GOVPN_PORT = 1194
 
 type sockPacket struct {
 	buf  []byte
@@ -23,7 +22,7 @@ type socket struct {
 	connected bool
 }
 
-func newSocket(o *options, input <-chan []byte, output chan<- []byte) *socket {
+func newSocket(o *opt.Options, input <-chan []byte, output chan<- []byte) *socket {
 	s := new(socket)
 	s.input = input
 	s.output = output
@@ -34,18 +33,18 @@ func newSocket(o *options, input <-chan []byte, output chan<- []byte) *socket {
 	return s
 }
 
-func (s *socket) createSocket(o *options) {
+func (s *socket) createSocket(o *opt.Options) {
 	conn, err := net.ListenUDP("udp",
-		&net.UDPAddr{IP: o.ce.localHost, Port: o.ce.localPort})
+		&net.UDPAddr{IP: o.Conn.LocalHost, Port: o.Conn.LocalPort})
 	if err != nil {
 		e.Msg(e.MErrorSock, "UDP: Cannot create UDP socket: %v.", err)
 	}
 	s.conn = conn
 }
 
-func (s *socket) resolveRemote(o *options) {
-	if o.ce.remoteHost != nil {
-		s.remote = utils.GetAddress(o.ce.remoteHost, o.ce.remotePort)
+func (s *socket) resolveRemote(o *opt.Options) {
+	if o.Conn.RemoteHost != nil {
+		s.remote = utils.GetAddress(o.Conn.RemoteHost, o.Conn.RemotePort)
 	}
 }
 

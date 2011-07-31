@@ -2,6 +2,7 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/opt"
 	"govpn/utils"
 	"net"
 	"os"
@@ -22,14 +23,14 @@ type tuntap struct {
 	netmask *net.UDPAddr
 }
 
-func newTuntap(o *options, input <-chan []byte, output chan<- []byte) *tuntap {
+func newTuntap(o *opt.Options, input <-chan []byte, output chan<- []byte) *tuntap {
 	tt := new(tuntap)
 	tt.input = input
 	tt.output = output
 
-	if o.ifconfigAddress != nil && o.ifconfigNetmask != nil {
-		tt.address = utils.GetAddress(o.ifconfigAddress, 0)
-		tt.netmask = utils.GetAddress(o.ifconfigNetmask, 0)
+	if o.IfconfigAddress != nil && o.IfconfigNetmask != nil {
+		tt.address = utils.GetAddress(o.IfconfigAddress, 0)
+		tt.netmask = utils.GetAddress(o.IfconfigNetmask, 0)
 	} else {
 		e.Msg(e.MUsage, "Must specify TAP device's IP and netmask.")
 	}
