@@ -28,7 +28,7 @@ func newTuntap(o *opt.Options, input <-chan []byte, output chan<- []byte) *tunta
 	tt.input = input
 	tt.output = output
 
-	if o.IfconfigAddress != nil && o.IfconfigNetmask != nil {
+	if o.IfconfigAddress != "" && o.IfconfigNetmask != "" {
 		tt.address = utils.GetAddress(o.IfconfigAddress, 0)
 		tt.netmask = utils.GetAddress(o.IfconfigNetmask, 0)
 	} else {

@@ -12,17 +12,17 @@ const MAX_PARAMS = 16
 const GOVPN_PORT = 1194
 
 type Connection struct {
-	LocalHost  []byte
+	LocalHost  string
 	LocalPort  int
-	RemoteHost []byte
+	RemoteHost string
 	RemotePort int
 }
 
 type Options struct {
 	Conn Connection
 
-	IfconfigAddress []byte
-	IfconfigNetmask []byte
+	IfconfigAddress string
+	IfconfigNetmask string
 
 	OCC bool
 
@@ -78,14 +78,14 @@ func (o *Options) AddOption(p []string, msglevel uint) {
 		usageVersion()
 	case "ifconfig":
 		if utils.IsValidHost(p[1]) && utils.IsValidHost(p[2]) {
-			o.IfconfigAddress = []byte(p[1])
-			o.IfconfigNetmask = []byte(p[2])
+			o.IfconfigAddress = p[1]
+			o.IfconfigNetmask = p[2]
 		} else {
 			e.Msg(msglevel, "ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
 	case "remote":
-		o.Conn.RemoteHost = []byte(p[1])
+		o.Conn.RemoteHost = p[1]
 		if len(p) > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !utils.IsValidPort(port) {
@@ -112,26 +112,26 @@ func (o *Options) postProcessVerify() {
 }
 
 func (o *Options) postProcessVerifyCe(Conn *Connection) {
-	if utils.StringDefinedEqual(Conn.LocalHost, Conn.RemoteHost) &&
+	if stringDefinedEqual(Conn.LocalHost, Conn.RemoteHost) &&
 		Conn.LocalPort == Conn.RemotePort {
 		e.Msg(e.MUsage, "--remote and --local addresses are the same.")
 	}
-	if utils.StringDefinedEqual(Conn.RemoteHost, o.IfconfigAddress) ||
-		utils.StringDefinedEqual(Conn.RemoteHost, o.IfconfigNetmask) {
+	if stringDefinedEqual(Conn.RemoteHost, o.IfconfigAddress) ||
+		stringDefinedEqual(Conn.RemoteHost, o.IfconfigNetmask) {
 		e.Msg(e.MUsage, "--remote address must be distinct from --ifconfig addresses.")
 	}
-	if utils.StringDefinedEqual(Conn.LocalHost, o.IfconfigAddress) ||
-		utils.StringDefinedEqual(Conn.LocalHost, o.IfconfigNetmask) {
+	if stringDefinedEqual(Conn.LocalHost, o.IfconfigAddress) ||
+		stringDefinedEqual(Conn.LocalHost, o.IfconfigNetmask) {
 		e.Msg(e.MUsage, "--local address must be distinct from --ifconfig addresses.")
 	}
-	if utils.StringDefinedEqual(o.IfconfigAddress, o.IfconfigNetmask) {
+	if stringDefinedEqual(o.IfconfigAddress, o.IfconfigNetmask) {
 		e.Msg(e.MUsage, "local and remote/netmask --ifconfig addresses must be different.")
 	}
 }
 
 func (o *Options) OptionsString() string {
 	out := "V4"
-	if o.IfconfigAddress != nil {
+	if o.IfconfigAddress != "" {
 		out += ",ifconfig " + o.ifconfigOptionsString()
 	}
 	return out
@@ -150,4 +150,8 @@ func usage() {
 func usageVersion() {
 	e.Msg(e.MInfo|e.MNoPrefix, "Version: ...\n")
 	os.Exit(1)
+}
+
+func stringDefinedEqual(s1, s2 string) bool {
+	return s1 != "" && s2 != "" && s1 == s2
 }

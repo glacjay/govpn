@@ -34,8 +34,8 @@ func newSocket(o *opt.Options, input <-chan []byte, output chan<- []byte) *socke
 }
 
 func (s *socket) createSocket(o *opt.Options) {
-	conn, err := net.ListenUDP("udp",
-		&net.UDPAddr{IP: o.Conn.LocalHost, Port: o.Conn.LocalPort})
+	addr := utils.GetAddress(o.Conn.LocalHost, o.Conn.LocalPort)
+	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		e.Msg(e.MErrorSock, "UDP: Cannot create UDP socket: %v.", err)
 	}
@@ -43,7 +43,7 @@ func (s *socket) createSocket(o *opt.Options) {
 }
 
 func (s *socket) resolveRemote(o *opt.Options) {
-	if o.Conn.RemoteHost != nil {
+	if o.Conn.RemoteHost != "" {
 		s.remote = utils.GetAddress(o.Conn.RemoteHost, o.Conn.RemotePort)
 	}
 }
