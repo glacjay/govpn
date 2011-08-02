@@ -124,12 +124,13 @@ func (o *Options) ifconfigOptionsString() string {
 }
 
 func (o *Options) AddOption(p []string, msglevel uint) {
-	switch p[0] {
-	case "help":
+	name := p[0]
+	num := len(p)
+	if name == "help" {
 		usage()
-	case "version":
+	} else if name == "version" {
 		usageVersion()
-	case "ifconfig":
+	} else if name == "ifconfig" && num > 2 {
 		if utils.IsValidHost(p[1]) && utils.IsValidHost(p[2]) {
 			o.IfconfigAddress = p[1]
 			o.IfconfigNetmask = p[2]
@@ -137,9 +138,9 @@ func (o *Options) AddOption(p []string, msglevel uint) {
 			e.Msg(msglevel, "ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
-	case "remote":
+	} else if name == "remote" && num > 1 {
 		o.Conn.RemoteHost = p[1]
-		if len(p) > 2 {
+		if num > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !utils.IsValidPort(port) {
 				e.Msg(msglevel, "remote: port number associated with host %s is out of range.", p[1])
@@ -147,11 +148,11 @@ func (o *Options) AddOption(p []string, msglevel uint) {
 			}
 			o.Conn.RemotePort = port
 		}
-	case "disable-occ":
+	} else if name == "disable-occ" {
 		o.OCC = false
-	case "verb":
+	} else if name == "verb" && num > 1 {
 		o.Verbosity = uint(utils.PosAtoi(p[1]))
-	default:
+	} else {
 		e.Msg(msglevel, "unrecognized option or missing parameter(s): --%s.", p[0])
 	}
 }
