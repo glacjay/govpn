@@ -11,6 +11,20 @@ const MAX_PARAMS = 16
 
 const GOVPN_PORT = 1194
 
+func usage() {
+	e.Msg(e.MUsage, "Usage: ...\n")
+	os.Exit(1)
+}
+
+func usageVersion() {
+	e.Msg(e.MInfo|e.MNoPrefix, "Version: ...\n")
+	os.Exit(1)
+}
+
+func stringDefinedEqual(s1, s2 string) bool {
+	return s1 != "" && s2 != "" && s1 == s2
+}
+
 type Connection struct {
 	LocalHost  string
 	LocalPort  int
@@ -70,39 +84,6 @@ func (o *Options) parseArgs() {
 	}
 }
 
-func (o *Options) AddOption(p []string, msglevel uint) {
-	switch p[0] {
-	case "help":
-		usage()
-	case "version":
-		usageVersion()
-	case "ifconfig":
-		if utils.IsValidHost(p[1]) && utils.IsValidHost(p[2]) {
-			o.IfconfigAddress = p[1]
-			o.IfconfigNetmask = p[2]
-		} else {
-			e.Msg(msglevel, "ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
-			return
-		}
-	case "remote":
-		o.Conn.RemoteHost = p[1]
-		if len(p) > 2 {
-			port, err := strconv.Atoi(p[2])
-			if err != nil || !utils.IsValidPort(port) {
-				e.Msg(msglevel, "remote: port number associated with host %s is out of range.", p[1])
-				return
-			}
-			o.Conn.RemotePort = port
-		}
-	case "disable-occ":
-		o.OCC = false
-	case "verb":
-		o.Verbosity = uint(utils.PosAtoi(p[1]))
-	default:
-		e.Msg(msglevel, "unrecognized option or missing parameter(s): --%s.", p[0])
-	}
-}
-
 func (o *Options) postProcess() {
 	o.postProcessVerify()
 }
@@ -142,16 +123,35 @@ func (o *Options) ifconfigOptionsString() string {
 		string(o.IfconfigNetmask)
 }
 
-func usage() {
-	e.Msg(e.MUsage, "Usage: ...\n")
-	os.Exit(1)
-}
-
-func usageVersion() {
-	e.Msg(e.MInfo|e.MNoPrefix, "Version: ...\n")
-	os.Exit(1)
-}
-
-func stringDefinedEqual(s1, s2 string) bool {
-	return s1 != "" && s2 != "" && s1 == s2
+func (o *Options) AddOption(p []string, msglevel uint) {
+	switch p[0] {
+	case "help":
+		usage()
+	case "version":
+		usageVersion()
+	case "ifconfig":
+		if utils.IsValidHost(p[1]) && utils.IsValidHost(p[2]) {
+			o.IfconfigAddress = p[1]
+			o.IfconfigNetmask = p[2]
+		} else {
+			e.Msg(msglevel, "ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
+			return
+		}
+	case "remote":
+		o.Conn.RemoteHost = p[1]
+		if len(p) > 2 {
+			port, err := strconv.Atoi(p[2])
+			if err != nil || !utils.IsValidPort(port) {
+				e.Msg(msglevel, "remote: port number associated with host %s is out of range.", p[1])
+				return
+			}
+			o.Conn.RemotePort = port
+		}
+	case "disable-occ":
+		o.OCC = false
+	case "verb":
+		o.Verbosity = uint(utils.PosAtoi(p[1]))
+	default:
+		e.Msg(msglevel, "unrecognized option or missing parameter(s): --%s.", p[0])
+	}
 }
