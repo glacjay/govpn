@@ -3,8 +3,10 @@ package main
 import (
 	"govpn/e"
 	"govpn/opt"
+	"govpn/sig"
 	"govpn/utils"
 	"net"
+	"syscall"
 )
 
 type sockPacket struct {
@@ -71,7 +73,13 @@ func (s *socket) outputLoop() {
 		buf := make([]byte, 4096)
 		nread, addr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			e.Msg(e.DLinkErrors, "UDPv4: read failed: %v", err)
+			if err.(net.Error).Temporary() {
+				continue
+			} else {
+				e.Msg(e.DLinkErrors, "UDPv4: read failed: %v", err)
+				sig.ThrowSignalSoft(syscall.SIGUSR1, "socket read failed")
+				break
+			}
 		}
 		if s.remote == nil {
 			s.remote = addr

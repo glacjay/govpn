@@ -31,3 +31,7 @@ func signalLoop() {
 		}
 	}
 }
+
+func ThrowSignalSoft(signo int32, text string) {
+	Signals <- &Signal{Signo: signo, Hard: false, Text: text}
+}
