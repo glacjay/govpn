@@ -44,7 +44,7 @@ func fromSockDispatch(occ *occStruct, input <-chan []byte, output chan<- []byte)
 	for {
 		msg := <-input
 		if isOCCMsg(msg) {
-			occ.processReceivedMsg(msg)
+			go occ.processReceivedMsg(msg)
 		} else {
 			output <- msg
 		}
