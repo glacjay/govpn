@@ -41,6 +41,7 @@ type Options struct {
 	OCC bool
 
 	Verbosity uint
+	Mute      int
 }
 
 func NewOptions() *Options {
@@ -152,6 +153,8 @@ func (o *Options) AddOption(p []string, msglevel uint) {
 		o.OCC = false
 	} else if name == "verb" && num > 1 {
 		o.Verbosity = uint(utils.PosAtoi(p[1]))
+	} else if name == "mute" && num > 1 {
+		o.Mute = utils.PosAtoi(p[1])
 	} else {
 		e.Msg(msglevel, "unrecognized option or missing parameter(s): --%s.", p[0])
 	}

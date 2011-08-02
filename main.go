@@ -55,7 +55,9 @@ func main() {
 	var s *sig.Signal
 	for {
 		o := opt.NewOptions()
+
 		e.SetDebugLevel(o.Verbosity)
+		e.SetMuteCutoff(o.Mute)
 
 		for {
 			s = tunnelP2P(o)

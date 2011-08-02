@@ -217,3 +217,7 @@ func timeString(showUsec bool) string {
 func SetDebugLevel(level uint) {
 	debugLevel = level
 }
+
+func SetMuteCutoff(cutoff int) {
+	muteCutoff = cutoff
+}
