@@ -3,6 +3,7 @@ package sig
 import (
 	"os"
 	ossignal "os/signal"
+	"syscall"
 )
 
 type Signal struct {
@@ -20,8 +21,13 @@ func init() {
 
 func signalLoop() {
 	for {
-		s := <-ossignal.Incoming
-		Signals <- &Signal{Signo: int32(s.(os.UnixSignal)),
-			Hard: true, Text: s.String()}
+		signal := <-ossignal.Incoming
+		signo := int32(signal.(os.UnixSignal))
+		if signo == syscall.SIGINT || signo == syscall.SIGTERM ||
+			signo == syscall.SIGHUP ||
+			signo == syscall.SIGUSR1 || signo == syscall.SIGUSR2 {
+			Signals <- &Signal{Signo: signo,
+				Hard: true, Text: signal.String()}
+		}
 	}
 }
