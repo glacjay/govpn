@@ -112,7 +112,7 @@ func init() {
 }
 
 func Msg(flags uint, format string, v ...interface{}) {
-	if flags&debugLevelMask <= debugLevel && !doMute(flags) {
+	if checkDebugLevel(flags) && !doMute(flags) {
 		m := fmt.Sprintf(format, v...)
 		messages <- &message{flags: flags, msg: m}
 	}
