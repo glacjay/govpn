@@ -1,4 +1,4 @@
-package main
+package occ
 
 import (
 	"govpn/e"
@@ -7,31 +7,28 @@ import (
 )
 
 // const, actually
-var occMagic = [16]byte{
+var messageHeader = [16]byte{
 	0x28, 0x7f, 0x34, 0x6b, 0xd4, 0xef, 0x7a, 0x81,
 	0x2d, 0x56, 0xb8, 0xd3, 0xaf, 0xc5, 0x45, 0x9c}
 
 // OCC Message Types
 const (
-	OCC_REQUEST = 0
-	OCC_REPLY   = 1
+	requestOpcode = 0
+	replyOpcode   = 1
 )
 
-type occStruct struct {
-	request bool
-
-	stop   chan bool
-	output chan<- []byte
+type OCC struct {
+	commandChan chan int
+	outputChan  chan<- []byte
 
 	localString  string
 	remoteString string
 }
 
-func newOCCStruct(o *opt.Options, output chan<- []byte) *occStruct {
-	occ := new(occStruct)
-	occ.request = o.OCC
-	occ.stop = make(chan bool, 1)
-	occ.output = output
+func New(o *opt.Options, outputChan chan<- []byte) *OCC {
+	occ := new(OCC)
+	occ.commandChan = make(chan int, 1)
+	occ.outputChan = outputChan
 
 	occ.localString = o.OptionsString()
 	e.Msg(e.MInfo, "Local Options String: '%s'", occ.localString)
@@ -41,47 +38,51 @@ func newOCCStruct(o *opt.Options, output chan<- []byte) *occStruct {
 	return occ
 }
 
-func (occ *occStruct) run() {
+func (occ *OCC) StartSendingRequest() {
 	go occ.outputLoop()
 }
 
-func (occ *occStruct) outputLoop() {
+func (occ *OCC) outputLoop() {
 	for i := 0; i < 12; i++ {
 		select {
-		case _ = <-occ.stop:
+		case _ = <-occ.commandChan:
 			return
 		case _ = <-time.After(1e9 * 10):
-			occ.output <- occ.reqMsg()
+			occ.outputChan <- occ.requestMessage()
 		}
 	}
 }
 
-func (occ *occStruct) Stop() {
-	occ.stop <- true
+func (occ *OCC) Stop() {
+	occ.commandChan <- 1
 }
 
-func (occ *occStruct) reqMsg() []byte {
+func (occ *OCC) requestMessage() []byte {
 	msg := make([]byte, 17)
-	copy(msg, occMagic[:])
-	msg[16] = OCC_REQUEST
+	copy(msg, messageHeader[:])
+	msg[16] = requestOpcode
 	return msg
 }
 
-func (occ *occStruct) replyMsg() []byte {
+func (occ *OCC) replyMessage() []byte {
 	msg := make([]byte, 18+len(occ.localString))
-	copy(msg, occMagic[:])
-	msg[16] = OCC_REPLY
+	copy(msg, messageHeader[:])
+	msg[16] = replyOpcode
 	copy(msg[17:], occ.localString)
 	msg[len(msg)-1] = 0
 	return msg
 }
 
-func (occ *occStruct) processReceivedMsg(msg []byte) {
+func (occ *OCC) CheckOccMessage(msg []byte) bool {
+	if msg == nil || len(msg) <= 16 || string(msg[:16]) != string(messageHeader[:]) {
+		return false
+	}
+
 	msg = msg[16:]
 	switch msg[0] {
-	case OCC_REQUEST:
-		occ.output <- occ.replyMsg()
-	case OCC_REPLY:
+	case requestOpcode:
+		occ.outputChan <- occ.replyMessage()
+	case replyOpcode:
 		occ.Stop()
 		remoteString := string(msg[1 : len(msg)-1])
 		if remoteString != occ.remoteString {
@@ -90,9 +91,5 @@ func (occ *occStruct) processReceivedMsg(msg []byte) {
 		}
 	default:
 	}
-}
-
-func isOCCMsg(msg []byte) bool {
-	return msg != nil && len(msg) > 16 &&
-		string(msg[:16]) == string(occMagic[:])
+	return true
 }

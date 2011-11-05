@@ -2,6 +2,7 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/occ"
 	"govpn/opt"
 	"govpn/sig"
 	"syscall"
@@ -20,8 +21,10 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 	tuntap.ifconfig()
 	tuntap.run()
 
-	occ := newOCCStruct(o, toSock)
-	occ.run()
+	occ := occ.New(o, toSock)
+	if o.EnableOCC {
+		occ.StartSendingRequest()
+	}
 
 	go fromSockDispatch(occ, fromSock, toTun)
 
@@ -40,14 +43,15 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 	return s
 }
 
-func fromSockDispatch(occ *occStruct, input <-chan []byte, output chan<- []byte) {
+func fromSockDispatch(occ *occ.OCC, input <-chan []byte, output chan<- []byte) {
 	for {
 		msg := <-input
-		if isOCCMsg(msg) {
-			go occ.processReceivedMsg(msg)
-		} else {
-			output <- msg
+
+		if occ.CheckOccMessage(msg) {
+			continue
 		}
+
+		output <- msg
 	}
 }
 

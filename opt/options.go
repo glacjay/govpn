@@ -38,7 +38,7 @@ type Options struct {
 	IfconfigAddress string
 	IfconfigNetmask string
 
-	OCC bool
+	EnableOCC bool
 
 	Verbosity uint
 	Mute      int
@@ -48,7 +48,7 @@ func NewOptions() *Options {
 	o := new(Options)
 	o.Conn.LocalPort = GOVPN_PORT
 	o.Conn.RemotePort = GOVPN_PORT
-	o.OCC = true
+	o.EnableOCC = true
 	o.Verbosity = 1
 
 	o.parseArgs()
@@ -150,7 +150,7 @@ func (o *Options) AddOption(p []string, msglevel uint) {
 			o.Conn.RemotePort = port
 		}
 	} else if name == "disable-occ" {
-		o.OCC = false
+		o.EnableOCC = false
 	} else if name == "verb" && num > 1 {
 		o.Verbosity = uint(utils.PosAtoi(p[1]))
 	} else if name == "mute" && num > 1 {
