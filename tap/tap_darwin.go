@@ -1,4 +1,4 @@
-package main
+package tap
 
 import (
 	"exec"
@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-func (tt *tuntap) open() {
+func (tap *Tap) Open() {
 	dynamicOpened := false
 	dynamicName := ""
 	for i := 0; i < 256; i++ {
@@ -15,7 +15,7 @@ func (tt *tuntap) open() {
 		dynamicName = fmt.Sprintf("tap%d", i)
 		fd, err := os.OpenFile(tunName, os.O_RDWR, 0)
 		if err == nil {
-			tt.fd = fd
+			tap.fd = fd
 			dynamicOpened = true
 			break
 		}
@@ -25,18 +25,18 @@ func (tt *tuntap) open() {
 		e.Msg(e.MError, "Cannot allocate TUN/TAP device dynamically.")
 	}
 
-	tt.actualName = dynamicName
-	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tt.actualName)
+	tap.actualName = dynamicName
+	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tap.actualName)
 }
 
-func (tt *tuntap) ifconfig() {
-	cmd := exec.Command("/sbin/ifconfig", tt.actualName, "delete")
+func (tap *Tap) Ifconfig() {
+	cmd := exec.Command("/sbin/ifconfig", tap.actualName, "delete")
 	_ = cmd.Run()
 	e.Msg(e.MInfo, "NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
 
-	cmd = exec.Command("/sbin/ifconfig", tt.actualName,
-		tt.address.IP.String(), "netmask",
-		tt.netmask.IP.String(), "mtu", "1500", "up")
+	cmd = exec.Command("/sbin/ifconfig", tap.actualName,
+		tap.ip.IP.String(), "netmask",
+		tap.mask.IP.String(), "mtu", "1500", "up")
 	err := cmd.Run()
 	if err != nil {
 		e.Msg(e.MFatal, "Mac OS X ifconfig failed: %v.", err)

@@ -1,20 +1,11 @@
 include $(GOROOT)/src/Make.inc
 
 TARG = govpn
-DEPS = e utils opt sig occ link
+DEPS = e utils opt sig occ link tap
 
 GOFILES = \
 	main.go \
-	tun.go \
-
-GOFILES_linux = \
-	tun_linux.go \
-
-GOFILES_darwin = \
-	tun_darwin.go \
-
-GOFILES += $(GOFILES_$(GOOS))
 
 include $(GOROOT)/src/Make.cmd
 
-CLEANFILES += `find . -name '*.a'`
+CLEANFILES += `find . -name '*.a'` `find . -name '_go_.[568]'`

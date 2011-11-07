@@ -6,6 +6,7 @@ import (
 	"govpn/occ"
 	"govpn/opt"
 	"govpn/sig"
+	"govpn/tap"
 	"syscall"
 )
 
@@ -17,10 +18,10 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 	link := link.New(o, toSock, fromSock)
 	link.Start()
 
-	tuntap := newTuntap(o, toTun, toSock)
-	tuntap.open()
-	tuntap.ifconfig()
-	tuntap.run()
+	tap := tap.New(o, toTun, toSock)
+	tap.Open()
+	tap.Ifconfig()
+	tap.Start()
 
 	occ := occ.New(o, toSock)
 	if o.EnableOCC {
@@ -38,7 +39,7 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 	}
 
 	occ.Stop()
-	tuntap.stop()
+	tap.Stop()
 	link.Stop()
 
 	return s
