@@ -1,11 +1,10 @@
 include $(GOROOT)/src/Make.inc
 
 TARG = govpn
-DEPS = e utils opt sig occ
+DEPS = e utils opt sig occ link
 
 GOFILES = \
 	main.go \
-	socket.go \
 	tun.go \
 
 GOFILES_linux = \

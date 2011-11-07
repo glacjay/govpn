@@ -2,6 +2,7 @@ package main
 
 import (
 	"govpn/e"
+	"govpn/link"
 	"govpn/occ"
 	"govpn/opt"
 	"govpn/sig"
@@ -13,8 +14,8 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 	toSock := make(chan []byte, 10)
 	toTun := make(chan []byte, 10)
 
-	socket := newSocket(o, toSock, fromSock)
-	socket.run()
+	link := link.New(o, toSock, fromSock)
+	link.Start()
 
 	tuntap := newTuntap(o, toTun, toSock)
 	tuntap.open()
@@ -38,7 +39,7 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 
 	occ.Stop()
 	tuntap.stop()
-	socket.stop()
+	link.Stop()
 
 	return s
 }
