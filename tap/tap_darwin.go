@@ -1,10 +1,10 @@
 package tap
 
 import (
-	"exec"
 	"fmt"
-	"govpn/e"
+	"github.com/glacjay/govpn/e"
 	"os"
+	"os/exec"
 )
 
 func (tap *Tap) Open() {

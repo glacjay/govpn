@@ -3,8 +3,8 @@ package e
 import (
 	"fmt"
 	"io"
+	"log/syslog"
 	"os"
-	"syslog"
 	"time"
 )
 
@@ -207,9 +207,9 @@ func checkDebugLevel(level uint) bool {
 }
 
 func timeString(showUsec bool) string {
-	buf := time.LocalTime().Format("2006-01-02 15:04:05")
+	buf := time.Now().Format("2006-01-02 15:04:05")
 	if showUsec {
-		buf += fmt.Sprintf(" us=%06d", (time.Nanoseconds()/1e3)%1e6)
+		buf += fmt.Sprintf(" us=%06d", (time.Now().Nanosecond()/1e3)%1e6)
 	}
 	return buf
 }

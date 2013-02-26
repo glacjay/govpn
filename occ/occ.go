@@ -1,8 +1,8 @@
 package occ
 
 import (
-	"govpn/e"
-	"govpn/opt"
+	"github.com/glacjay/govpn/e"
+	"github.com/glacjay/govpn/opt"
 	"time"
 )
 

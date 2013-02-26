@@ -1,12 +1,12 @@
 package main
 
 import (
-	"govpn/e"
-	"govpn/link"
-	"govpn/occ"
-	"govpn/opt"
-	"govpn/sig"
-	"govpn/tap"
+	"github.com/glacjay/govpn/e"
+	"github.com/glacjay/govpn/link"
+	"github.com/glacjay/govpn/occ"
+	"github.com/glacjay/govpn/opt"
+	"github.com/glacjay/govpn/sig"
+	"github.com/glacjay/govpn/tap"
 	"syscall"
 )
 

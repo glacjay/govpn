@@ -2,7 +2,7 @@ package tap
 
 import (
 	"exec"
-	"govpn/e"
+	"github.com/glacjay/govpn/e"
 	"os"
 	"syscall"
 	"unsafe"

@@ -1,10 +1,10 @@
 package link
 
 import (
-	"govpn/e"
-	"govpn/opt"
-	"govpn/sig"
-	"govpn/utils"
+	"github.com/glacjay/govpn/e"
+	"github.com/glacjay/govpn/opt"
+	"github.com/glacjay/govpn/sig"
+	"github.com/glacjay/govpn/utils"
 	"net"
 	"syscall"
 )

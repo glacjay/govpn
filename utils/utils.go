@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"govpn/e"
+	"github.com/glacjay/govpn/e"
 	"net"
 	"strconv"
 )

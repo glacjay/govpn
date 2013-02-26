@@ -7,31 +7,28 @@ import (
 )
 
 type Signal struct {
-	Signo int32
+	Signo syscall.Signal
 	Hard  bool
 	Text  string
 }
 
-var Signals chan *Signal
+var Signals = make(chan *Signal, 1)
 
 func init() {
-	Signals = make(chan *Signal, 1)
-	go signalLoop()
+	signalsFromOS := make(chan os.Signal, 1)
+	ossignal.Notify(signalsFromOS, syscall.SIGINT, syscall.SIGTERM,
+		syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
+	go signalLoop(signalsFromOS)
 }
 
-func signalLoop() {
+func signalLoop(signalsFromOS <-chan os.Signal) {
 	for {
-		signal := <-ossignal.Incoming
-		signo := int32(signal.(os.UnixSignal))
-		if signo == syscall.SIGINT || signo == syscall.SIGTERM ||
-			signo == syscall.SIGHUP ||
-			signo == syscall.SIGUSR1 || signo == syscall.SIGUSR2 {
-			Signals <- &Signal{Signo: signo,
-				Hard: true, Text: signal.String()}
-		}
+		signal := <-signalsFromOS
+		signo := signal.(syscall.Signal)
+		Signals <- &Signal{Signo: signo, Hard: true, Text: signal.String()}
 	}
 }
 
-func ThrowSignalSoft(signo int32, text string) {
+func ThrowSignalSoft(signo syscall.Signal, text string) {
 	Signals <- &Signal{Signo: signo, Hard: false, Text: text}
 }

@@ -1,9 +1,9 @@
 package tap
 
 import (
-	"govpn/e"
-	"govpn/opt"
-	"govpn/utils"
+	"github.com/glacjay/govpn/e"
+	"github.com/glacjay/govpn/opt"
+	"github.com/glacjay/govpn/utils"
 	"net"
 	"os"
 )

@@ -1,8 +1,8 @@
 package opt
 
 import (
-	"govpn/e"
-	"govpn/utils"
+	"github.com/glacjay/govpn/e"
+	"github.com/glacjay/govpn/utils"
 	"os"
 	"strconv"
 )
