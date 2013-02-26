@@ -1,9 +1,9 @@
 package tap
 
 import (
-	"exec"
 	"github.com/glacjay/govpn/e"
 	"os"
+	"os/exec"
 	"syscall"
 	"unsafe"
 )
@@ -24,7 +24,7 @@ func (tap *Tap) Open() {
 		uintptr(tap.fd.Fd()), uintptr(0x400454ca), // TUNSETIFF
 		uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
-		e.Msg(e.MWarning, "Cannot ioctl TUNSETIFF: %v", os.Errno(errno))
+		e.Msg(e.MWarning, "Cannot ioctl TUNSETIFF: %v", errno)
 	}
 
 	tap.actualName = string(ifr)
