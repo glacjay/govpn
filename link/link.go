@@ -3,10 +3,8 @@ package link
 import (
 	"github.com/glacjay/govpn/e"
 	"github.com/glacjay/govpn/opt"
-	"github.com/glacjay/govpn/sig"
 	"github.com/glacjay/govpn/utils"
 	"net"
-	"syscall"
 )
 
 type Link struct {
@@ -64,9 +62,7 @@ func (link *Link) outputLoop() {
 			if err.(net.Error).Temporary() {
 				continue
 			} else {
-				e.Msg(e.DLinkErrors, "UDPv4: read failed: %v", err)
-				sig.ThrowSignalSoft(syscall.SIGUSR1, "socket read failed")
-				break
+				e.Msg(e.MFatal, "UDPv4: read failed: %v", err)
 			}
 		}
 		if link.remote == nil {

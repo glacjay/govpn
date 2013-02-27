@@ -5,12 +5,10 @@ import (
 	"github.com/glacjay/govpn/link"
 	"github.com/glacjay/govpn/occ"
 	"github.com/glacjay/govpn/opt"
-	"github.com/glacjay/govpn/sig"
 	"github.com/glacjay/govpn/tap"
-	"syscall"
 )
 
-func tunnelP2P(o *opt.Options) *sig.Signal {
+func tunnelP2P(o *opt.Options) {
 	fromSock := make(chan []byte, 10)
 	toSock := make(chan []byte, 10)
 	toTun := make(chan []byte, 10)
@@ -28,21 +26,11 @@ func tunnelP2P(o *opt.Options) *sig.Signal {
 		occ.StartSendingRequest()
 	}
 
-	go fromSockDispatch(occ, fromSock, toTun)
-
-	var s *sig.Signal
-	for {
-		s = <-sig.Signals
-		if s.Signo == syscall.SIGTERM || s.Signo == syscall.SIGINT {
-			break
-		}
-	}
+	fromSockDispatch(occ, fromSock, toTun)
 
 	occ.Stop()
 	tap.Stop()
 	link.Stop()
-
-	return s
 }
 
 func fromSockDispatch(occ *occ.OCC, input <-chan []byte, output chan<- []byte) {
@@ -58,22 +46,10 @@ func fromSockDispatch(occ *occ.OCC, input <-chan []byte, output chan<- []byte) {
 }
 
 func main() {
-	var s *sig.Signal
-	for {
-		o := opt.NewOptions()
+	o := opt.NewOptions()
 
-		e.SetDebugLevel(o.Verbosity)
-		e.SetMuteCutoff(o.Mute)
+	e.SetDebugLevel(o.Verbosity)
+	e.SetMuteCutoff(o.Mute)
 
-		for {
-			s = tunnelP2P(o)
-			if s.Signo != syscall.SIGUSR1 {
-				break
-			}
-		}
-
-		if s.Signo != syscall.SIGHUP {
-			break
-		}
-	}
+	tunnelP2P(o)
 }
