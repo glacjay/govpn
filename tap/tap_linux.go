@@ -4,6 +4,7 @@ import (
 	"github.com/glacjay/govpn/e"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -28,13 +29,14 @@ func (tap *Tap) Open() {
 	}
 
 	tap.actualName = string(ifr)
+	tap.actualName = tap.actualName[:strings.Index(tap.actualName, "\000")]
 	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tap.actualName)
 }
 
 func (tap *Tap) Ifconfig() {
-	cmd := exec.Command("/sbin/ifconfig", tap.actualName,
-		tap.ip.IP.String(), "netmask",
-		tap.mask.IP.String(), "mtu", "1500")
+	cmd := exec.Command("ifconfig", tap.actualName, tap.ip.IP.String(),
+		"netmask", tap.mask.IP.String(), "mtu", "1500")
+	e.Msg(e.MDebug, "ifconfig command: %v", strings.Join(cmd.Args, " "))
 	err := cmd.Run()
 	if err != nil {
 		e.Msg(e.MFatal, "Linux ifconfig failed: %v.", err)
