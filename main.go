@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/glacjay/govpn/e"
+	l4g "code.google.com/p/log4go"
 	"github.com/glacjay/govpn/link"
 	"github.com/glacjay/govpn/occ"
 	"github.com/glacjay/govpn/opt"
@@ -46,10 +46,9 @@ func fromSockDispatch(occ *occ.OCC, input <-chan []byte, output chan<- []byte) {
 }
 
 func main() {
+	defer l4g.Close()
+	l4g.LogBufferLength = 0
+	l4g.Info("main")
 	o := opt.NewOptions()
-
-	e.SetDebugLevel(o.Verbosity)
-	e.SetMuteCutoff(o.Mute)
-
 	tunnelP2P(o)
 }

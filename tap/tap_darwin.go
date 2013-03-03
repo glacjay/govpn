@@ -1,8 +1,8 @@
 package tap
 
 import (
+	l4g "code.google.com/p/log4go"
 	"fmt"
-	"github.com/glacjay/govpn/e"
 	"os"
 	"os/exec"
 )
@@ -19,26 +19,27 @@ func (tap *Tap) Open() {
 			dynamicOpened = true
 			break
 		}
-		e.Msg(e.DReadWrite, "Tried opening %s (failed): %v.", tunName, err)
+		l4g.Finest("Tried opening %s (failed): %v.", tunName, err)
 	}
 	if !dynamicOpened {
-		e.Msg(e.MError, "Cannot allocate TUN/TAP device dynamically.")
+		l4g.Critical("Cannot allocate TUN/TAP device dynamically.")
+		os.Exit(1)
 	}
 
 	tap.actualName = dynamicName
-	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tap.actualName)
+	l4g.Info("TUN/TAP device %s opened.", tap.actualName)
 }
 
 func (tap *Tap) Ifconfig() {
 	cmd := exec.Command("/sbin/ifconfig", tap.actualName, "delete")
 	_ = cmd.Run()
-	e.Msg(e.MInfo, "NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
+	l4g.Info("NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
 
 	cmd = exec.Command("/sbin/ifconfig", tap.actualName,
 		tap.ip.IP.String(), "netmask",
 		tap.mask.IP.String(), "mtu", "1500", "up")
 	err := cmd.Run()
 	if err != nil {
-		e.Msg(e.MFatal, "Mac OS X ifconfig failed: %v.", err)
+		l4g.Error("Mac OS X ifconfig failed: %v.", err)
 	}
 }

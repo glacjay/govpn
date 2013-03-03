@@ -1,9 +1,10 @@
 package utils
 
 import (
+	l4g "code.google.com/p/log4go"
 	"fmt"
-	"github.com/glacjay/govpn/e"
 	"net"
+	"os"
 	"strconv"
 )
 
@@ -39,7 +40,8 @@ func GetAddress(host string, port int) *net.UDPAddr {
 	str := fmt.Sprintf("%s:%d", host, port)
 	addr, err := net.ResolveUDPAddr("udp", str)
 	if err != nil {
-		e.Msg(e.MFatal, "RESOLVE: Cannot resolve host address %s: %v.", str, err)
+		l4g.Critical("RESOLVE: Cannot resolve host address %s: %v.", str, err)
+		os.Exit(1)
 	}
 	return addr
 }

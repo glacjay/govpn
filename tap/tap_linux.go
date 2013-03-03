@@ -1,7 +1,7 @@
 package tap
 
 import (
-	"github.com/glacjay/govpn/e"
+	l4g "code.google.com/p/log4go"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,7 +13,8 @@ func (tap *Tap) Open() {
 	deviceFile := "/dev/net/tun"
 	fd, err := os.OpenFile(deviceFile, os.O_RDWR, 0)
 	if err != nil {
-		e.Msg(e.MWarning, "Note: Cannot open TUN/TAP dev %s: %v", deviceFile, err)
+		l4g.Critical("Note: Cannot open TUN/TAP dev %s: %v", deviceFile, err)
+		os.Exit(1)
 	}
 	tap.fd = fd
 
@@ -25,20 +26,21 @@ func (tap *Tap) Open() {
 		uintptr(tap.fd.Fd()), uintptr(0x400454ca), // TUNSETIFF
 		uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
-		e.Msg(e.MWarning, "Cannot ioctl TUNSETIFF: %v", errno)
+		l4g.Critical("Cannot ioctl TUNSETIFF: %v", errno)
+		os.Exit(1)
 	}
 
 	tap.actualName = string(ifr)
 	tap.actualName = tap.actualName[:strings.Index(tap.actualName, "\000")]
-	e.Msg(e.MInfo, "TUN/TAP device %s opened.", tap.actualName)
+	l4g.Info("TUN/TAP device %s opened.", tap.actualName)
 }
 
 func (tap *Tap) Ifconfig() {
 	cmd := exec.Command("ifconfig", tap.actualName, tap.ip.IP.String(),
 		"netmask", tap.mask.IP.String(), "mtu", "1500")
-	e.Msg(e.MDebug, "ifconfig command: %v", strings.Join(cmd.Args, " "))
+	l4g.Debug("ifconfig command: %v", strings.Join(cmd.Args, " "))
 	err := cmd.Run()
 	if err != nil {
-		e.Msg(e.MFatal, "Linux ifconfig failed: %v.", err)
+		l4g.Error("Linux ifconfig failed: %v.", err)
 	}
 }

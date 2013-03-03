@@ -1,7 +1,7 @@
 package tap
 
 import (
-	"github.com/glacjay/govpn/e"
+	l4g "code.google.com/p/log4go"
 	"github.com/glacjay/govpn/opt"
 	"github.com/glacjay/govpn/utils"
 	"net"
@@ -28,7 +28,8 @@ func New(o *opt.Options, inputChan <-chan []byte, outputChan chan<- []byte) *Tap
 		tap.ip = utils.GetAddress(o.IfconfigAddress, 0)
 		tap.mask = utils.GetAddress(o.IfconfigNetmask, 0)
 	} else {
-		e.Msg(e.MUsage, "Must specify TAP device's IP and netmask.")
+		l4g.Error("Must specify TAP device's IP and netmask.")
+		os.Exit(1)
 	}
 
 	return tap
@@ -44,7 +45,7 @@ func (tap *Tap) inputLoop() {
 		buf := <-tap.inputChan
 		_, err := tap.fd.Write(buf)
 		if err != nil {
-			e.Msg(e.DLinkErrors, "TUN/TAP: write failed: %v", err)
+			l4g.Error("TUN/TAP: write failed: %v", err)
 		}
 	}
 }
@@ -54,7 +55,7 @@ func (tap *Tap) outputLoop() {
 		buf := make([]byte, 4096)
 		nread, err := tap.fd.Read(buf)
 		if err != nil {
-			e.Msg(e.DLinkErrors, "TUN/TAP: read failed: %v", err)
+			l4g.Error("TUN/TAP: read failed: %v", err)
 		}
 		tap.outputChan <- buf[:nread]
 	}

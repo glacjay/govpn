@@ -1,7 +1,7 @@
 package occ
 
 import (
-	"github.com/glacjay/govpn/e"
+	l4g "code.google.com/p/log4go"
 	"github.com/glacjay/govpn/opt"
 	"time"
 )
@@ -31,9 +31,9 @@ func New(o *opt.Options, outputChan chan<- []byte) *OCC {
 	occ.outputChan = outputChan
 
 	occ.localString = o.OptionsString()
-	e.Msg(e.MInfo, "Local Options String: '%s'", occ.localString)
+	l4g.Info("Local Options String: '%s'", occ.localString)
 	occ.remoteString = o.OptionsString()
-	e.Msg(e.MInfo, "Expected Remote Options String: '%s'", occ.remoteString)
+	l4g.Info("Expected Remote Options String: '%s'", occ.remoteString)
 
 	return occ
 }
@@ -86,7 +86,7 @@ func (occ *OCC) CheckOccMessage(msg []byte) bool {
 		occ.Stop()
 		remoteString := string(msg[1 : len(msg)-1])
 		if remoteString != occ.remoteString {
-			e.Msg(e.DShowOCC, "NOTE: Options consistency check may be skewed by version differences.")
+			l4g.Info("NOTE: Options consistency check may be skewed by version differences.")
 			// TODO More detailed check
 		}
 	default:
