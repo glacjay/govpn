@@ -1,8 +1,8 @@
 package opt
 
 import (
-	l4g "code.google.com/p/log4go"
 	"github.com/glacjay/govpn/utils"
+	"log"
 	"os"
 	"strconv"
 )
@@ -12,12 +12,12 @@ const MAX_PARAMS = 16
 const GOVPN_PORT = 1194
 
 func usage() {
-	l4g.Error("Usage: ...\n")
+	log.Printf("[EROR] Usage: ...\n")
 	os.Exit(1)
 }
 
 func usageVersion() {
-	l4g.Info("Version: ...\n")
+	log.Printf("[INFO] Version: ...\n")
 	os.Exit(0)
 }
 
@@ -65,7 +65,7 @@ func (o *Options) parseArgs() {
 		p := make([]string, 0, MAX_PARAMS)
 		p = append(p, args[i])
 		if p[0][:2] != "--" {
-			l4g.Warn("I'm trying to parse '%s' as an option parameter but I don't see a leading '--'.", p[0])
+			log.Printf("[WARN] I'm trying to parse '%s' as an option parameter but I don't see a leading '--'.", p[0])
 		} else {
 			p[0] = p[0][2:]
 		}
@@ -94,24 +94,23 @@ func (o *Options) postProcessVerify() {
 }
 
 func (o *Options) postProcessVerifyCe(Conn *Connection) {
-	l4g.Debug("opt.postProcessVerifyCe")
 	if stringDefinedEqual(Conn.LocalHost, Conn.RemoteHost) &&
 		Conn.LocalPort == Conn.RemotePort {
-		l4g.Error("--remote and --local addresses are the same.")
+		log.Printf("[EROR] --remote and --local addresses are the same.")
 		os.Exit(1)
 	}
 	if stringDefinedEqual(Conn.RemoteHost, o.IfconfigAddress) ||
 		stringDefinedEqual(Conn.RemoteHost, o.IfconfigNetmask) {
-		l4g.Error("--remote address must be distinct from --ifconfig addresses.")
+		log.Printf("[EROR] --remote address must be distinct from --ifconfig addresses.")
 		os.Exit(1)
 	}
 	if stringDefinedEqual(Conn.LocalHost, o.IfconfigAddress) ||
 		stringDefinedEqual(Conn.LocalHost, o.IfconfigNetmask) {
-		l4g.Error("--local address must be distinct from --ifconfig addresses.")
+		log.Printf("[EROR] --local address must be distinct from --ifconfig addresses.")
 		os.Exit(1)
 	}
 	if stringDefinedEqual(o.IfconfigAddress, o.IfconfigNetmask) {
-		l4g.Error("local and remote/netmask --ifconfig addresses must be different.")
+		log.Printf("[EROR] local and remote/netmask --ifconfig addresses must be different.")
 		os.Exit(1)
 	}
 }
@@ -141,7 +140,7 @@ func (o *Options) AddOption(p []string) {
 			o.IfconfigAddress = p[1]
 			o.IfconfigNetmask = p[2]
 		} else {
-			l4g.Error("ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
+			log.Printf("[EROR] ifconfig params '%s' and '%s' must be valid addresses.", p[1], p[2])
 			return
 		}
 	} else if name == "remote" && num > 1 {
@@ -149,7 +148,7 @@ func (o *Options) AddOption(p []string) {
 		if num > 2 {
 			port, err := strconv.Atoi(p[2])
 			if err != nil || !utils.IsValidPort(port) {
-				l4g.Error("remote: port number associated with host %s is out of range.", p[1])
+				log.Printf("[EROR] remote: port number associated with host %s is out of range.", p[1])
 				return
 			}
 			o.Conn.RemotePort = port
@@ -161,6 +160,6 @@ func (o *Options) AddOption(p []string) {
 	} else if name == "mute" && num > 1 {
 		o.Mute = utils.PosAtoi(p[1])
 	} else {
-		l4g.Error("unrecognized option or missing parameter(s): --%s.", p[0])
+		log.Printf("[EROR] unrecognized option or missing parameter(s): --%s.", p[0])
 	}
 }

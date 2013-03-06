@@ -1,11 +1,10 @@
 package link
 
 import (
-	l4g "code.google.com/p/log4go"
 	"github.com/glacjay/govpn/opt"
 	"github.com/glacjay/govpn/utils"
+	"log"
 	"net"
-	"os"
 )
 
 type Link struct {
@@ -26,8 +25,7 @@ func New(o *opt.Options, inputChan <-chan []byte, outputChan chan<- []byte) *Lin
 	addr := utils.GetAddress(o.Conn.LocalHost, o.Conn.LocalPort)
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		l4g.Critical("UDP: Cannot create UDP socket: %v.", err)
-		os.Exit(1)
+		log.Fatalf("[CRIT] UDP: Cannot create UDP socket: %v.", err)
 	}
 	link.conn = conn
 
@@ -51,7 +49,7 @@ func (link *Link) inputLoop() {
 		}
 		_, err := link.conn.WriteToUDP(buf, link.remote)
 		if err != nil {
-			l4g.Error("UDPv4: write failed: %v", err)
+			log.Printf("[EROR] UDPv4: write failed: %v", err)
 		}
 	}
 }
@@ -64,20 +62,20 @@ func (link *Link) outputLoop() {
 			if err.(net.Error).Temporary() {
 				continue
 			} else {
-				l4g.Error("UDPv4: read failed: %v", err)
+				log.Printf("[EROR] UDPv4: read failed: %v", err)
 			}
 		}
 		if link.remote == nil {
 			link.remote = addr
 		}
 		if link.remote.String() != addr.String() {
-			l4g.Warn("TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), link.remote.String())
+			log.Printf("[WARN] TCP/UDP: Incoming packet rejected from %s[%s], expected peer address: %s (allow this incoming source address/port by removing --remote)", addr.String(), addr.Network(), link.remote.String())
 			continue
 		}
 		if !link.connected {
 			link.connected = true
-			l4g.Info("Peer Connection Initiated with %s", addr.String())
-			l4g.Info("Initialization Sequence Completed.")
+			log.Printf("[INFO] Peer Connection Initiated with %s", addr.String())
+			log.Printf("[INFO] Initialization Sequence Completed.")
 		}
 
 		link.outputChan <- buf[:nread]
