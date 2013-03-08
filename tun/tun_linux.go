@@ -1,4 +1,4 @@
-package tap
+package tun
 
 import (
 	"log"
@@ -9,33 +9,39 @@ import (
 	"unsafe"
 )
 
-func (tap *Tap) Open() {
+const (
+	IFF_NO_PI = 0x10
+	IFF_TUN   = 0x01
+	IFF_TAP   = 0x02
+	TUNSETIFF = 0x400454CA
+)
+
+func (tun *Tun) Open() {
 	deviceFile := "/dev/net/tun"
 	fd, err := os.OpenFile(deviceFile, os.O_RDWR, 0)
 	if err != nil {
 		log.Fatalf("[CRIT] Note: Cannot open TUN/TAP dev %s: %v", deviceFile, err)
 	}
-	tap.fd = fd
+	tun.fd = fd
 
 	ifr := make([]byte, 18)
-	ifr[17] = 0x10 // IFF_NO_PI
-	ifr[16] = 0x02 // IFF_TAP
-
+	ifr[17] = IFF_NO_PI
+	ifr[16] = IFF_TUN
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL,
-		uintptr(tap.fd.Fd()), uintptr(0x400454ca), // TUNSETIFF
+		uintptr(tun.fd.Fd()), uintptr(TUNSETIFF),
 		uintptr(unsafe.Pointer(&ifr[0])))
 	if errno != 0 {
 		log.Fatalf("[CRIT] Cannot ioctl TUNSETIFF: %v", errno)
 	}
 
-	tap.actualName = string(ifr)
-	tap.actualName = tap.actualName[:strings.Index(tap.actualName, "\000")]
-	log.Printf("[INFO] TUN/TAP device %s opened.", tap.actualName)
+	tun.actualName = string(ifr)
+	tun.actualName = tun.actualName[:strings.Index(tun.actualName, "\000")]
+	log.Printf("[INFO] TUN/TAP device %s opened.", tun.actualName)
 }
 
-func (tap *Tap) Ifconfig() {
-	cmd := exec.Command("ifconfig", tap.actualName, tap.ip.IP.String(),
-		"netmask", tap.mask.IP.String(), "mtu", "1500")
+func (tun *Tun) SetupAddress(addr, mask string) {
+	cmd := exec.Command("ifconfig", tun.actualName, addr,
+		"netmask", mask, "mtu", "1500")
 	log.Printf("[DEBG] ifconfig command: %v", strings.Join(cmd.Args, " "))
 	err := cmd.Run()
 	if err != nil {
