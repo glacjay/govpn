@@ -31,6 +31,8 @@ const (
 type key2 struct {
 	count int
 	keys  [2]key
+	encI  int
+	decI  int
 }
 
 type key struct {
@@ -42,39 +44,8 @@ func main() {
 	flag.Parse()
 
 	var keys *key2
-	var encryptIndex, decryptIndex int
 	if *flagSecretFile != "" {
-		content := readSecretFile(*flagSecretFile)
-		keys = &key2{count: len(content) / (maxCipherKeyLen + maxHMacKeyLen)}
-		index := 0
-		for i := 0; i < keys.count; i++ {
-			copy(keys.keys[i].cipher[:], content[index:index+maxCipherKeyLen])
-			index += maxCipherKeyLen
-			copy(keys.keys[i].hmac[:], content[index:index+maxHMacKeyLen])
-			index += maxHMacKeyLen
-		}
-		switch *flagSecretDir {
-		case -1:
-			if keys.count < 1 {
-				log.Fatal("Malformed secret file: contains less than 1 complete key for bidirection")
-			}
-			encryptIndex = 0
-			decryptIndex = 0
-		case 0:
-			if keys.count < 2 {
-				log.Fatal("Malformed secret file: contains less than 2 complete key for normal direction")
-			}
-			encryptIndex = 0
-			decryptIndex = 1
-		case 1:
-			if keys.count < 2 {
-				log.Fatal("Malformed secret file: contains less than 2 complete key for inverse direction")
-			}
-			encryptIndex = 1
-			decryptIndex = 0
-		default:
-			log.Fatal("Invalid direction setup: %v", *flagSecretDir)
-		}
+		keys = initKeysWithSecretFile(*flagSecretFile, *flagSecretDir)
 	}
 
 	remoteAddrs, err := net.LookupIP(*flagRemoteHost)
@@ -169,4 +140,39 @@ func readSecretFile(filename string) []byte {
 		}
 	}
 	return content.Bytes()
+}
+
+func initKeysWithSecretFile(filename string, direction int) *key2 {
+	content := readSecretFile(filename)
+	keys := &key2{count: len(content) / (maxCipherKeyLen + maxHMacKeyLen)}
+	index := 0
+	for i := 0; i < keys.count; i++ {
+		copy(keys.keys[i].cipher[:], content[index:index+maxCipherKeyLen])
+		index += maxCipherKeyLen
+		copy(keys.keys[i].hmac[:], content[index:index+maxHMacKeyLen])
+		index += maxHMacKeyLen
+	}
+	switch direction {
+	case -1:
+		if keys.count < 1 {
+			log.Fatal("Malformed secret file: contains less than 1 complete key for bidirection")
+		}
+		keys.encI = 0
+		keys.decI = 0
+	case 0:
+		if keys.count < 2 {
+			log.Fatal("Malformed secret file: contains less than 2 complete key for normal direction")
+		}
+		keys.encI = 0
+		keys.decI = 1
+	case 1:
+		if keys.count < 2 {
+			log.Fatal("Malformed secret file: contains less than 2 complete key for inverse direction")
+		}
+		keys.encI = 1
+		keys.decI = 0
+	default:
+		log.Fatal("Invalid direction setup: %v", *flagSecretDir)
+	}
+	return keys
 }
