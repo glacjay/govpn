@@ -47,6 +47,7 @@ func main() {
 	if *flagSecretFile != "" {
 		keys = initKeysWithSecretFile(*flagSecretFile, *flagSecretDir)
 	}
+	log.Printf("keys: %v", keys)
 
 	remoteAddrs, err := net.LookupIP(*flagRemoteHost)
 	if err != nil || len(remoteAddrs) == 0 {

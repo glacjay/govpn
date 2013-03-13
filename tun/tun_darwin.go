@@ -10,7 +10,7 @@ import (
 func (tun *Tun) Open() {
 	dynamicOpened := false
 	dynamicName := ""
-	for i := 0; i < 256; i++ {
+	for i := 0; i < 16; i++ {
 		tunName := fmt.Sprintf("/dev/tun%d", i)
 		dynamicName = fmt.Sprintf("tun%d", i)
 		fd, err := os.OpenFile(tunName, os.O_RDWR, 0)
@@ -19,6 +19,7 @@ func (tun *Tun) Open() {
 			dynamicOpened = true
 			break
 		}
+		log.Printf("[WARN] Failed to open TUN/TAP device '%s': %v", dynamicName, err)
 	}
 	if !dynamicOpened {
 		log.Fatalf("[CRIT] Cannot allocate TUN/TAP device dynamically.")
@@ -28,16 +29,15 @@ func (tun *Tun) Open() {
 	log.Printf("[INFO] TUN/TAP device %s opened.", tun.actualName)
 }
 
-func (tun *Tun) Ifconfig() {
+func (tun *Tun) SetupAddress(addr, mask string) {
 	cmd := exec.Command("/sbin/ifconfig", tun.actualName, "delete")
 	_ = cmd.Run()
 	log.Printf("[INFO] NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
 
 	cmd = exec.Command("/sbin/ifconfig", tun.actualName,
-		tun.ip.IP.String(), "netmask",
-		tun.mask.IP.String(), "mtu", "1500", "up")
-	err := cmd.Run()
+		addr, "netmask", mask, "mtu", "1500", "up")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("[EROR] Mac OS X ifconfig failed: %v.", err)
+		log.Fatalf("[CRIT] Mac OS X ifconfig failed: %v: %s", err, output)
 	}
 }
