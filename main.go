@@ -75,37 +75,54 @@ func main() {
 	tunDevice.SetupAddress(virtAddr, virtMask)
 	tunDevice.Start()
 
-	go linkToTunLoop(conn, tunDevice)
+	sendNetCh := startSendingNet(conn)
+	recvNetCh := startRecvingNet(conn)
 	for {
-		packet := <-tunDevice.ReadCh
-		_, err := conn.Write(packet)
-		if err != nil {
-			log.Printf("[EROR] Failed to write to UDP socket: %v", err)
-			return
+		select {
+		case packet := <-tunDevice.ReadCh:
+			sendNetCh <- packet
+		case packet := <-recvNetCh:
+			tunDevice.WriteCh <- packet
 		}
 	}
 }
 
-func linkToTunLoop(conn *net.UDPConn, tunDevice *tun.Tun) {
-	defer conn.Close()
-	defer tunDevice.Stop()
+func startSendingNet(conn *net.UDPConn) chan<- []byte {
+	ch := make(chan []byte)
+	go func() {
+		for {
+			packet := <-ch
+			_, err := conn.Write(packet)
+			if err != nil {
+				log.Printf("[EROR] Failed to write to UDP socket: %v", err)
+				return
+			}
+		}
+	}()
+	return ch
+}
 
+func startRecvingNet(conn *net.UDPConn) <-chan []byte {
+	ch := make(chan []byte)
 	var buf [4096]byte
-	for {
-		nread, err := conn.Read(buf[:])
-		if nread > 0 {
-			packet := make([]byte, nread)
-			copy(packet, buf[:nread])
-			tunDevice.WriteCh <- packet
+	go func() {
+		for {
+			nread, err := conn.Read(buf[:])
+			if nread > 0 {
+				packet := make([]byte, nread)
+				copy(packet, buf[:nread])
+				ch <- packet
+			}
+			if nread == 0 {
+				return
+			}
+			if err != nil {
+				log.Printf("[EROR] Failed to read from UDP socket: %v", err)
+				return
+			}
 		}
-		if nread == 0 {
-			return
-		}
-		if err != nil {
-			log.Printf("[EROR] Failed to read from UDP socket: %v", err)
-			return
-		}
-	}
+	}()
+	return ch
 }
 
 func readSecretFile(filename string) []byte {
