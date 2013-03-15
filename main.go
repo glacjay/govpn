@@ -3,9 +3,14 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha1"
 	"flag"
 	"fmt"
 	"github.com/glacjay/govpn/tun"
+	"hash"
 	"log"
 	"net"
 	"os"
@@ -43,11 +48,22 @@ type key struct {
 func main() {
 	flag.Parse()
 
-	var keys *key2
+	var encCipher, decCipher cipher.Block
+	var encHmac, decHmac hash.Hash
 	if *flagSecretFile != "" {
-		keys = initKeysWithSecretFile(*flagSecretFile, *flagSecretDir)
+		var err error
+		keys := initKeysWithSecretFile(*flagSecretFile, *flagSecretDir)
+		encCipher, err = aes.NewCipher(keys.keys[keys.encI].cipher[:32])
+		if err != nil {
+			log.Fatalf("Failed to create AES256 cipher for encryption: %v", err)
+		}
+		encHmac = hmac.New(sha1.New, keys.keys[keys.encI].hmac[:])
+		decCipher, err = aes.NewCipher(keys.keys[keys.decI].cipher[:32])
+		if err != nil {
+			log.Fatalf("Failed to create AES256 cipher for decryption: %v", err)
+		}
+		decHmac = hmac.New(sha1.New, keys.keys[keys.decI].hmac[:])
 	}
-	log.Printf("keys: %v", keys)
 
 	remoteAddrs, err := net.LookupIP(*flagRemoteHost)
 	if err != nil || len(remoteAddrs) == 0 {
@@ -80,8 +96,20 @@ func main() {
 	for {
 		select {
 		case packet := <-tunDevice.ReadCh:
+			if encCipher != nil {
+				packet = encrypt(encCipher, packet)
+			}
+			if encHmac != nil {
+				packet = sign(encHmac, packet)
+			}
 			sendNetCh <- packet
 		case packet := <-recvNetCh:
+			if decCipher != nil {
+				packet = decrypt(decCipher, packet)
+			}
+			if decHmac != nil {
+				packet = verify(decHmac, packet)
+			}
 			tunDevice.WriteCh <- packet
 		}
 	}
@@ -193,4 +221,20 @@ func initKeysWithSecretFile(filename string, direction int) *key2 {
 		log.Fatal("Invalid direction setup: %v", *flagSecretDir)
 	}
 	return keys
+}
+
+func encrypt(encCipher cipher.Block, plain []byte) []byte {
+	return plain
+}
+
+func decrypt(decCipher cipher.Block, encrypted []byte) []byte {
+	return encrypted
+}
+
+func sign(encHmac hash.Hash, origin []byte) []byte {
+	return origin
+}
+
+func verify(decHmac hash.Hash, signed []byte) []byte {
+	return signed
 }

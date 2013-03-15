@@ -35,7 +35,7 @@ func (tun *Tun) SetupAddress(addr, mask string) {
 	log.Printf("[INFO] NOTE: Tried to delete pre-existing TUN/TAP instance -- no problem if failed.")
 
 	cmd = exec.Command("/sbin/ifconfig", tun.actualName,
-		addr, "netmask", mask, "mtu", "1500", "up")
+		addr, addr, "netmask", mask, "mtu", "1500", "up")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Fatalf("[CRIT] Mac OS X ifconfig failed: %v: %s", err, output)

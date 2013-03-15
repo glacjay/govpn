@@ -27,7 +27,7 @@ func (tun *Tun) writeLoop() {
 		buf := <-tun.WriteCh
 		_, err := tun.fd.Write(buf)
 		if err != nil {
-			log.Printf("[EROR] TUN/TAP: write failed: %v", err)
+			log.Printf("[EROR] TUN/TAP: write failed: %v: %v", err, buf)
 			tun.fd.Close()
 			return
 		}
