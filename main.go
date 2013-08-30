@@ -6,11 +6,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"flag"
 	"fmt"
 	"github.com/glacjay/govpn/tun"
 	"hash"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -57,12 +59,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create AES256 cipher for encryption: %v", err)
 		}
-		encHmac = hmac.New(sha1.New, keys.keys[keys.encI].hmac[:])
+		encHmac = hmac.New(sha1.New, keys.keys[keys.encI].hmac[:20])
 		decCipher, err = aes.NewCipher(keys.keys[keys.decI].cipher[:32])
 		if err != nil {
 			log.Fatalf("Failed to create AES256 cipher for decryption: %v", err)
 		}
-		decHmac = hmac.New(sha1.New, keys.keys[keys.decI].hmac[:])
+		decHmac = hmac.New(sha1.New, keys.keys[keys.decI].hmac[:20])
 	}
 
 	remoteAddrs, err := net.LookupIP(*flagRemoteHost)
@@ -104,11 +106,16 @@ func main() {
 			}
 			sendNetCh <- packet
 		case packet := <-recvNetCh:
+			if decHmac != nil {
+				var valid bool
+				packet, valid = verify(decHmac, packet)
+				if !valid {
+					log.Printf("hmac authentication failed")
+					continue
+				}
+			}
 			if decCipher != nil {
 				packet = decrypt(decCipher, packet)
-			}
-			if decHmac != nil {
-				packet = verify(decHmac, packet)
 			}
 			tunDevice.WriteCh <- packet
 		}
@@ -175,7 +182,7 @@ func readSecretFile(filename string) []byte {
 			if len(scanner.Text())%2 == 1 {
 				log.Fatalf("Malformed secret file: line %d has odd characters", lineno)
 			}
-			for i := 0; i < len(scanner.Text())/2; i++ {
+			for i := 0; i < len(scanner.Text()); i += 2 {
 				var c byte
 				_, err := fmt.Sscanf(scanner.Text()[i:i+2], "%02x", &c)
 				if err != nil {
@@ -193,9 +200,9 @@ func initKeysWithSecretFile(filename string, direction int) *key2 {
 	keys := &key2{count: len(content) / (maxCipherKeyLen + maxHMacKeyLen)}
 	index := 0
 	for i := 0; i < keys.count; i++ {
-		copy(keys.keys[i].cipher[:], content[index:index+maxCipherKeyLen])
+		copy(keys.keys[i].cipher[:maxCipherKeyLen], content[index:index+maxCipherKeyLen])
 		index += maxCipherKeyLen
-		copy(keys.keys[i].hmac[:], content[index:index+maxHMacKeyLen])
+		copy(keys.keys[i].hmac[:maxHMacKeyLen], content[index:index+maxHMacKeyLen])
 		index += maxHMacKeyLen
 	}
 	switch direction {
@@ -224,17 +231,40 @@ func initKeysWithSecretFile(filename string, direction int) *key2 {
 }
 
 func encrypt(encCipher cipher.Block, plain []byte) []byte {
-	return plain
+	plainlen := len(plain)
+	paddinglen := encCipher.BlockSize() - plainlen%encCipher.BlockSize()
+	for i := 0; i < paddinglen; i++ {
+		plain = append(plain, byte(paddinglen))
+	}
+	iv := make([]byte, encCipher.BlockSize())
+	io.ReadFull(rand.Reader, iv)
+	enc := cipher.NewCBCEncrypter(encCipher, iv)
+	enc.CryptBlocks(plain, plain)
+	return append(iv, plain...)
 }
 
 func decrypt(decCipher cipher.Block, encrypted []byte) []byte {
-	return encrypted
+	iv := encrypted[:decCipher.BlockSize()]
+	plain := encrypted[decCipher.BlockSize():]
+	dec := cipher.NewCBCDecrypter(decCipher, iv)
+	dec.CryptBlocks(plain, plain)
+	return plain[:len(plain)-int(plain[len(plain)-1])]
 }
 
 func sign(encHmac hash.Hash, origin []byte) []byte {
-	return origin
+	encHmac.Reset()
+	encHmac.Write(origin)
+	hmac := make([]byte, 0)
+	hmac = encHmac.Sum(hmac)
+	return append(hmac, origin...)
 }
 
-func verify(decHmac hash.Hash, signed []byte) []byte {
-	return signed
+func verify(decHmac hash.Hash, signed []byte) ([]byte, bool) {
+	remoteHmac := signed[:decHmac.Size()]
+	origin := signed[decHmac.Size():]
+	decHmac.Reset()
+	decHmac.Write(origin)
+	localHmac := make([]byte, 0)
+	localHmac = decHmac.Sum(localHmac)
+	return origin, bytes.Equal(remoteHmac, localHmac)
 }
