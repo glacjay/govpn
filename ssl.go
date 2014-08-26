@@ -6,7 +6,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -42,49 +41,42 @@ type reliablePacket struct {
 	content         []byte
 }
 
-type reliableReading struct {
-	ch chan *reliablePacket
+type reliable struct {
+	conn       *net.UDPConn
+	netReadCh  chan *reliablePacket
+	netWriteCh chan *reliablePacket
 
-	acks ackArray
-}
-
-type reliableWriting struct {
-	ch chan *reliablePacket
-
-	packetId uint32
-	packets  map[uint32]*reliablePacket
-}
-
-type client struct {
-	mutex sync.Mutex
-
-	peerAddr string
-	conn     *net.UDPConn
+	currentPacketId uint32
+	pendingPackets  map[uint32]*reliablePacket
+	acks            ackArray
 
 	keyId           byte
 	localSessionId  sessionId
 	remoteSessionId sessionId
+}
 
-	reliableReading reliableReading
-	reliableWriting reliableWriting
+type client struct {
+	peerAddr       string
+	conn           *net.UDPConn
+	reliableReadCh chan *reliablePacket
+
+	reliable reliable
 }
 
 func newClient(peerAddr string) *client {
 	c := &client{
-		peerAddr: peerAddr,
-		keyId:    0,
-		reliableReading: reliableReading{
-			ch: make(chan *reliablePacket),
-		},
-		reliableWriting: reliableWriting{
-			ch:      make(chan *reliablePacket),
-			packets: make(map[uint32]*reliablePacket),
+		peerAddr:       peerAddr,
+		reliableReadCh: make(chan *reliablePacket),
+		reliable: reliable{
+			netReadCh:      make(chan *reliablePacket),
+			netWriteCh:     make(chan *reliablePacket),
+			pendingPackets: make(map[uint32]*reliablePacket),
 		},
 	}
 
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < len(c.localSessionId); i++ {
-		c.localSessionId[i] = byte(r.Intn(256))
+	for i := 0; i < len(c.reliable.localSessionId); i++ {
+		c.reliable.localSessionId[i] = byte(r.Intn(256))
 	}
 
 	return c
@@ -100,13 +92,14 @@ func (c *client) start() {
 		log.Fatalf("can't connect to peer: %v", err)
 	}
 
-	go c.runReliableReadingLoop(c.conn)
-	go c.runReliableWritingLoop()
+	c.reliable.conn = c.conn
+	go c.reliable.loopReading(c.conn)
+	go c.reliable.loopWriting(c.reliableReadCh)
 
-	c.sendHardReset()
+	c.handshake()
 }
 
-func (c *client) runReliableReadingLoop(conn *net.UDPConn) {
+func (rel *reliable) loopReading(conn *net.UDPConn) {
 	for {
 		var buf [2000]byte
 		nr, err := conn.Read(buf[:])
@@ -115,14 +108,7 @@ func (c *client) runReliableReadingLoop(conn *net.UDPConn) {
 		}
 		packet := parseReliablePacket(buf[:nr])
 		if packet != nil {
-			c.reliableReading.ch <- packet
-			c.reliableReading.acks = append(c.reliableReading.acks, packet.packetId)
-			if _, ok := c.reliableWriting.packets[packet.packetId]; ok {
-				delete(c.reliableWriting.packets, packet.packetId)
-			}
-			if bytes.Equal(c.remoteSessionId[:], make([]byte, 8)) {
-				copy(c.remoteSessionId[:], packet.localSessionId[:])
-			}
+			rel.netReadCh <- packet
 		}
 	}
 }
@@ -156,7 +142,7 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	}
 	packet.acks = make([]uint32, ackCount)
 	for i := 0; i < ackCount; i++ {
-		packet.acks[i] = binary.LittleEndian.Uint32(buf[:4])
+		packet.acks[i] = binary.BigEndian.Uint32(buf[:4])
 		log.Printf("endian: %v", packet.acks[i])
 		buf = buf[4:]
 	}
@@ -174,8 +160,7 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	if len(buf) < 4 {
 		return nil
 	}
-	packet.packetId = binary.LittleEndian.Uint32(buf[:4])
-	log.Printf("endian: %v", packet.packetId)
+	packet.packetId = binary.BigEndian.Uint32(buf[:4])
 	buf = buf[4:]
 
 	//  content
@@ -184,29 +169,36 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	return packet
 }
 
-func (c *client) runReliableWritingLoop() {
+func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 	for {
 		var resendTimeout <-chan time.Time
-		if len(c.reliableWriting.packets) > 0 {
+		if len(rel.pendingPackets) > 0 {
 			resendTimeout = time.After(time.Second)
 		}
 
 		var ackTimeout <-chan time.Time
-		if len(c.reliableReading.acks) > 0 {
+		if len(rel.acks) > 0 {
 			ackTimeout = time.After(time.Nanosecond)
 		}
 
 		select {
-		case packet := <-c.reliableWriting.ch:
-			c.sendReliablePacket(packet)
-			c.reliableWriting.packets[packet.packetId] = packet
+		case packet := <-rel.netReadCh:
+			rel.acks = append(rel.acks, packet.packetId)
+			log.Printf("acks: %#v", rel.acks)
+			if _, ok := rel.pendingPackets[packet.packetId]; ok {
+				delete(rel.pendingPackets, packet.packetId)
+			}
+			reliableReadCh <- packet
+		case packet := <-rel.netWriteCh:
+			rel.sendReliablePacket(packet)
+			rel.pendingPackets[packet.packetId] = packet
 		case <-resendTimeout:
-			for _, packet := range c.reliableWriting.packets {
-				c.sendReliablePacket(packet)
+			for _, packet := range rel.pendingPackets {
+				rel.sendReliablePacket(packet)
 				break
 			}
 		case <-ackTimeout:
-			c.sendReliablePacket(&reliablePacket{opCode: kProtoAckV1})
+			rel.sendReliablePacket(&reliablePacket{opCode: kProtoAckV1})
 		}
 	}
 }
@@ -214,21 +206,21 @@ func (c *client) runReliableWritingLoop() {
 func appendUint32(buf []byte, num uint32) []byte {
 	log.Printf("endian: %v", num)
 	var numBuf [4]byte
-	binary.LittleEndian.PutUint32(numBuf[:], num)
+	binary.BigEndian.PutUint32(numBuf[:], num)
 	return append(buf, numBuf[:]...)
 }
 
-func (c *client) sendReliablePacket(packet *reliablePacket) {
+func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 	log.Printf("sendReliablePacket: %#v", packet)
 	var buf []byte
 
 	//  op code and key id
-	buf = append(buf, mergeOpKey(packet.opCode, c.keyId))
+	buf = append(buf, mergeOpKey(packet.opCode, rel.keyId))
 
 	//  local session id
-	buf = append(buf, c.localSessionId[:]...)
+	buf = append(buf, rel.localSessionId[:]...)
 
-	ackCount := byte(len(c.reliableReading.acks))
+	ackCount := byte(len(rel.acks))
 	sendedAckCount := ackCount
 	if sendedAckCount > 8 {
 		sendedAckCount = 8
@@ -237,17 +229,17 @@ func (c *client) sendReliablePacket(packet *reliablePacket) {
 	//  acks
 	buf = append(buf, ackCount)
 	for i := byte(0); i < sendedAckCount; i++ {
-		buf = appendUint32(buf, c.reliableReading.acks[i])
+		buf = appendUint32(buf, rel.acks[i])
 	}
 
 	//  remote session id
 	if ackCount > 0 {
-		buf = append(buf, c.remoteSessionId[:]...)
+		buf = append(buf, rel.remoteSessionId[:]...)
 	}
 
 	//  packet id
 	if packet.opCode != kProtoAckV1 {
-		buf = appendUint32(buf, c.reliableWriting.packetId)
+		buf = appendUint32(buf, rel.currentPacketId)
 	}
 
 	//  content
@@ -255,28 +247,33 @@ func (c *client) sendReliablePacket(packet *reliablePacket) {
 	log.Printf("buf=%#v", buf)
 
 	//  sending
-	_, err := c.conn.Write(buf)
+	_, err := rel.conn.Write(buf)
 	if err != nil {
 		log.Fatalf("can't send packet to peer: %v", err)
 	}
 
-	c.reliableWriting.packetId++
-	c.reliableReading.acks = c.reliableReading.acks[sendedAckCount:]
+	rel.currentPacketId++
+	rel.acks = rel.acks[sendedAckCount:]
 }
 
-func (c *client) sendHardReset() {
+func (c *client) handshake() {
 	hardResetPacket := &reliablePacket{
 		opCode: kProtoControlHardResetClientV2,
 	}
-	c.reliableWriting.ch <- hardResetPacket
+	c.reliable.netWriteCh <- hardResetPacket
 
-	packet := <-c.reliableReading.ch
-	log.Printf("recv packet: %#v", packet)
-
-	time.Sleep(time.Second)
+	for {
+		select {
+		case packet := <-c.reliableReadCh:
+			log.Printf("recv packet: %#v", packet)
+			if bytes.Equal(c.reliable.remoteSessionId[:], make([]byte, 8)) {
+				copy(c.reliable.remoteSessionId[:], packet.localSessionId[:])
+			}
+		}
+	}
 }
 
 func main() {
-	c := newClient("192.168.56.8:1194")
+	c := newClient("127.0.0.1:1194")
 	c.start()
 }
