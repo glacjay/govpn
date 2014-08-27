@@ -165,16 +165,17 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	}
 
 	//  packet id
-	if len(buf) < 4 {
-		return nil
+	if packet.opCode != kProtoAckV1 {
+		if len(buf) < 4 {
+			return nil
+		}
+		packet.packetId = binary.BigEndian.Uint32(buf[:4])
+		buf = buf[4:]
 	}
-	packet.packetId = binary.BigEndian.Uint32(buf[:4])
-	buf = buf[4:]
 
 	//  content
 	packet.content = buf
 
-	//log.Printf("parsed packet: %#v", packet)
 	return packet
 }
 
@@ -193,8 +194,10 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 		select {
 		case packet := <-rel.netReadCh:
 			rel.acks = append(rel.acks, packet.packetId)
-			if _, ok := rel.pendingPackets[packet.packetId]; ok {
-				delete(rel.pendingPackets, packet.packetId)
+			for _, ack := range packet.acks {
+				if _, ok := rel.pendingPackets[ack]; ok {
+					delete(rel.pendingPackets, ack)
+				}
 			}
 			switch packet.opCode {
 			case kProtoControlHardResetServerV2:
@@ -226,19 +229,6 @@ func appendUint32(buf []byte, num uint32) []byte {
 }
 
 func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
-	//log.Printf("sendReliablePacket: %#v", packet)
-	var content []byte
-	if packet.content != nil {
-		length := len(packet.content)
-		if length > 10 {
-			length = 10
-		}
-		content = packet.content[:length]
-	}
-	if packet.opCode != kProtoAckV1 {
-		log.Printf("sendReliable: id=%d op=%d content=%#v", packet.packetId, packet.opCode, content)
-	}
-
 	var buf []byte
 
 	//  op code and key id
@@ -291,7 +281,9 @@ func (rel *reliable) SetWriteDeadline(t time.Time) error { return nil }
 func (rel *reliable) Read(b []byte) (n int, err error) {
 	for rel.netReadBuf.Len() == 0 {
 		packet := <-rel.reliableReadCh
-		rel.netReadBuf.Write(packet.content)
+		if packet.opCode == kProtoControlV1 {
+			rel.netReadBuf.Write(packet.content)
+		}
 	}
 	return rel.netReadBuf.Read(b)
 }
@@ -346,6 +338,37 @@ func (c *client) handshake() {
 	if err != nil {
 		log.Fatalf("can't handshake tls with remote: %v", err)
 	}
+
+	//  openvpn client send key
+	buf := &bytes.Buffer{}
+	//  uint32 0
+	buf.Write([]byte{0, 0, 0, 0})
+	//  key method
+	buf.WriteByte(2)
+	//  key material
+	for i := 0; i < 48+32+32; i++ {
+		buf.WriteByte(byte(rand.Int()))
+	}
+	//  options string
+	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher BF-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
+	lenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(lenBuf, uint16(len(optionsString)+1))
+	buf.Write(lenBuf)
+	buf.WriteString(optionsString)
+	buf.WriteByte(0)
+	//  username and password
+	buf.Write([]byte{0, 0, 0, 0})
+	_, err = tlsConn.Write(buf.Bytes())
+	if err != nil {
+		log.Fatalf("can't send key to remote: %v", err)
+	}
+
+	recvBuf := make([]byte, 1024)
+	nr, err := tlsConn.Read(recvBuf)
+	if err != nil {
+		log.Fatalf("can't get key from remote: %v", err)
+	}
+	log.Printf("got key buf: %#v", recvBuf[:nr])
 }
 
 func main() {
