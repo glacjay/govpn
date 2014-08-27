@@ -174,6 +174,7 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	//  content
 	packet.content = buf
 
+	//log.Printf("parsed packet: %#v", packet)
 	return packet
 }
 
@@ -192,7 +193,6 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 		select {
 		case packet := <-rel.netReadCh:
 			rel.acks = append(rel.acks, packet.packetId)
-			log.Printf("acks: %#v", rel.acks)
 			if _, ok := rel.pendingPackets[packet.packetId]; ok {
 				delete(rel.pendingPackets, packet.packetId)
 			}
@@ -203,8 +203,10 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 				reliableReadCh <- packet
 			}
 		case packet := <-rel.netWriteCh:
-			packet.packetId = rel.currentPacketId
-			rel.currentPacketId++
+			if packet.opCode != kProtoAckV1 {
+				packet.packetId = rel.currentPacketId
+				rel.currentPacketId++
+			}
 			rel.sendReliablePacket(packet)
 			rel.pendingPackets[packet.packetId] = packet
 		case <-resendTimeout:
@@ -224,7 +226,19 @@ func appendUint32(buf []byte, num uint32) []byte {
 }
 
 func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
-	log.Printf("sendReliablePacket: %#v", packet)
+	//log.Printf("sendReliablePacket: %#v", packet)
+	var content []byte
+	if packet.content != nil {
+		length := len(packet.content)
+		if length > 10 {
+			length = 10
+		}
+		content = packet.content[:length]
+	}
+	if packet.opCode != kProtoAckV1 {
+		log.Printf("sendReliable: id=%d op=%d content=%#v", packet.packetId, packet.opCode, content)
+	}
+
 	var buf []byte
 
 	//  op code and key id
@@ -233,15 +247,15 @@ func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 	//  local session id
 	buf = append(buf, rel.localSessionId[:]...)
 
-	ackCount := byte(len(rel.acks))
+	ackCount := len(rel.acks)
 	sendedAckCount := ackCount
 	if sendedAckCount > 8 {
 		sendedAckCount = 8
 	}
 
 	//  acks
-	buf = append(buf, ackCount)
-	for i := byte(0); i < sendedAckCount; i++ {
+	buf = append(buf, byte(ackCount))
+	for i := 0; i < sendedAckCount; i++ {
 		buf = appendUint32(buf, rel.acks[i])
 	}
 
@@ -257,7 +271,6 @@ func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 
 	//  content
 	buf = append(buf, packet.content...)
-	log.Printf("buf=%#v", buf)
 
 	//  sending
 	_, err := rel.conn.Write(buf)
@@ -284,9 +297,11 @@ func (rel *reliable) Read(b []byte) (n int, err error) {
 }
 
 func (rel *reliable) Write(b []byte) (n int, err error) {
+	buf := make([]byte, len(b))
+	copy(buf, b)
 	packet := &reliablePacket{
 		opCode:  kProtoControlV1,
-		content: b,
+		content: buf,
 	}
 	rel.netWriteCh <- packet
 	return len(b), nil
@@ -299,7 +314,6 @@ func (c *client) handshake() {
 	c.reliable.netWriteCh <- hardResetPacket
 
 	packet := <-c.reliableReadCh
-	log.Printf("recv packet: %#v", packet)
 	if bytes.Equal(c.reliable.remoteSessionId[:], make([]byte, 8)) {
 		copy(c.reliable.remoteSessionId[:], packet.localSessionId[:])
 	} else {
@@ -322,9 +336,10 @@ func (c *client) handshake() {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      caCerts,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		Certificates:       []tls.Certificate{clientCert},
+		RootCAs:            caCerts,
+		ClientAuth:         tls.RequireAndVerifyClientCert,
+		InsecureSkipVerify: true,
 	}
 	tlsConn := tls.Client(&c.reliable, tlsConfig)
 	err = tlsConn.Handshake()
