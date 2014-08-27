@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/md5"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"flag"
+	"hash"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -45,6 +49,12 @@ type reliablePacket struct {
 	content         []byte
 }
 
+type keySource2 struct {
+	preMaster [48]byte
+	random1   [32]byte
+	random2   [32]byte
+}
+
 type reliable struct {
 	conn       *net.UDPConn
 	netReadCh  chan *reliablePacket
@@ -60,6 +70,9 @@ type reliable struct {
 	keyId           byte
 	localSessionId  sessionId
 	remoteSessionId sessionId
+
+	localKeySource  keySource2
+	remoteKeySource keySource2
 }
 
 type client struct {
@@ -346,8 +359,20 @@ func (c *client) handshake() {
 	//  key method
 	buf.WriteByte(2)
 	//  key material
-	for i := 0; i < 48+32+32; i++ {
-		buf.WriteByte(byte(rand.Int()))
+	for i := 0; i < 48; i++ {
+		b := byte(rand.Int())
+		c.reliable.localKeySource.preMaster[i] = b
+		buf.WriteByte(b)
+	}
+	for i := 0; i < 32; i++ {
+		b := byte(rand.Int())
+		c.reliable.localKeySource.random1[i] = b
+		buf.WriteByte(b)
+	}
+	for i := 0; i < 32; i++ {
+		b := byte(rand.Int())
+		c.reliable.localKeySource.random2[i] = b
+		buf.WriteByte(b)
 	}
 	//  options string
 	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher BF-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
@@ -369,6 +394,75 @@ func (c *client) handshake() {
 		log.Fatalf("can't get key from remote: %v", err)
 	}
 	log.Printf("got key buf: %#v", recvBuf[:nr])
+	//copy(c.reliable.remoteKeySource.preMaster[:], recvBuf[5:53])
+	copy(c.reliable.remoteKeySource.random1[:], recvBuf[5:37])
+	copy(c.reliable.remoteKeySource.random2[:], recvBuf[37:69])
+
+	master := make([]byte, 48)
+	prf(c.reliable.localKeySource.preMaster[:], "OpenVPN master secret",
+		c.reliable.localKeySource.random1[:], c.reliable.remoteKeySource.random1[:],
+		nil, nil, master)
+	key2 := make([]byte, 256)
+	prf(master, "OpenVPN key expansion",
+		c.reliable.localKeySource.random2[:], c.reliable.remoteKeySource.random2[:],
+		c.reliable.localSessionId[:], c.reliable.remoteSessionId[:], key2)
+	log.Printf("encrypt cipher: %#v", key2[:16])
+	log.Printf("encrypt digest: %#v", key2[64:84])
+	log.Printf("decrypt cipher: %#v", key2[128:144])
+	log.Printf("decrypt digest: %#v", key2[192:212])
+
+	time.Sleep(time.Second)
+}
+
+func prf(secret []byte, label string, clientSeed, serverSeed []byte, clientSid, serverSid []byte, result []byte) {
+	seed := &bytes.Buffer{}
+	seed.WriteString(label)
+	seed.Write(clientSeed)
+	seed.Write(serverSeed)
+	if clientSid != nil {
+		seed.Write(clientSid)
+	}
+	if serverSid != nil {
+		seed.Write(serverSid)
+	}
+	tls1Prf(seed.Bytes(), secret, result)
+}
+
+func tls1Prf(label, secret []byte, result []byte) {
+	out2 := make([]byte, len(result))
+
+	length := len(secret) / 2
+	s1 := secret[:length]
+	s2 := secret[length:]
+	tls1Phash(md5.New, s1, label, result)
+	tls1Phash(sha1.New, s2, label, out2)
+	for i := 0; i < len(result); i++ {
+		result[i] ^= out2[i]
+	}
+}
+
+func tls1Phash(hasher func() hash.Hash, secret, seed []byte, result []byte) {
+	hasher1 := hmac.New(hasher, secret)
+	hasher1.Write(seed)
+	a1 := hasher1.Sum(nil)
+
+	for {
+		hasher1 := hmac.New(hasher, secret)
+		hasher2 := hmac.New(hasher, secret)
+		hasher1.Write(a1)
+		hasher2.Write(a1)
+		hasher1.Write(seed)
+		if len(result) > hasher1.Size() {
+			out := hasher1.Sum(nil)
+			copy(result, out)
+			result = result[len(out):]
+			a1 = hasher2.Sum(nil)
+		} else {
+			a1 = hasher1.Sum(nil)
+			copy(result, a1)
+			break
+		}
+	}
 }
 
 func main() {
