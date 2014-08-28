@@ -2,17 +2,20 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"flag"
 	"hash"
+	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net"
 	"time"
 )
@@ -63,6 +66,9 @@ type reliable struct {
 
 	reliableReadCh chan *reliablePacket
 
+	plainSendCh chan []byte
+	plainRecvCh chan []byte
+
 	currentPacketId uint32
 	pendingPackets  map[uint32]*reliablePacket
 	acks            ackArray
@@ -73,6 +79,11 @@ type reliable struct {
 
 	localKeySource  keySource2
 	remoteKeySource keySource2
+
+	encryptCipherKey [16]byte
+	encryptDigestKey [20]byte
+	decryptCipherKey [16]byte
+	decryptDigestKey [20]byte
 }
 
 type client struct {
@@ -90,17 +101,14 @@ func newClient(peerAddr string) *client {
 		reliable: reliable{
 			netReadCh:      make(chan *reliablePacket),
 			netWriteCh:     make(chan *reliablePacket),
+			plainSendCh:    make(chan []byte),
+			plainRecvCh:    make(chan []byte),
 			netReadBuf:     &bytes.Buffer{},
 			pendingPackets: make(map[uint32]*reliablePacket),
 		},
 	}
 	c.reliable.reliableReadCh = c.reliableReadCh
-
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < len(c.reliable.localSessionId); i++ {
-		c.reliable.localSessionId[i] = byte(r.Intn(256))
-	}
-
+	io.ReadFull(rand.Reader, c.reliable.localSessionId[:])
 	return c
 }
 
@@ -127,6 +135,11 @@ func (rel *reliable) loopReading(conn *net.UDPConn) {
 		nr, err := conn.Read(buf[:])
 		if err != nil {
 			log.Fatalf("can't recv packet from peer: %v", err)
+		}
+		if buf[0]>>3 == 6 {
+			plain := rel.decrypt(buf[1:nr])
+			rel.plainRecvCh <- plain
+			continue
 		}
 		packet := parseReliablePacket(buf[:nr])
 		if packet != nil {
@@ -192,6 +205,35 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	return packet
 }
 
+func (rel *reliable) decrypt(content []byte) []byte {
+	hasher := hmac.New(sha1.New, rel.decryptDigestKey[:])
+	if len(content) < hasher.Size() {
+		log.Printf("ERROR plain size too small")
+		return nil
+	}
+	hasher.Write(content[hasher.Size():])
+	sig := hasher.Sum(nil)
+	if !bytes.Equal(sig, content[:hasher.Size()]) {
+		log.Printf("ERROR invalid signature")
+		return nil
+	}
+	content = content[hasher.Size():]
+
+	iv := content[:16]
+	content = content[16:]
+	blocker, _ := aes.NewCipher(rel.decryptCipherKey[:])
+	decrypter := cipher.NewCBCDecrypter(blocker, iv)
+	plain := make([]byte, len(content))
+	decrypter.CryptBlocks(plain, content)
+
+	//packetId := binary.BigEndian.Uint32(plain[:4])
+	//plain = plain[4:]
+	paddingLen := int(plain[len(plain)-1])
+	plain = plain[:len(plain)-paddingLen]
+
+	return plain
+}
+
 func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 	for {
 		var resendTimeout <-chan time.Time
@@ -231,6 +273,12 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 			}
 		case <-ackTimeout:
 			rel.sendReliablePacket(&reliablePacket{opCode: kProtoAckV1})
+		case plain := <-rel.plainSendCh:
+			packet := &reliablePacket{
+				opCode:  kProtoDataV1,
+				content: rel.encrypt(plain),
+			}
+			rel.sendReliablePacket(packet)
 		}
 	}
 }
@@ -247,29 +295,33 @@ func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 	//  op code and key id
 	buf = append(buf, mergeOpKey(packet.opCode, rel.keyId))
 
-	//  local session id
-	buf = append(buf, rel.localSessionId[:]...)
+	var sendedAckCount int
 
-	ackCount := len(rel.acks)
-	sendedAckCount := ackCount
-	if sendedAckCount > 8 {
-		sendedAckCount = 8
-	}
+	if packet.opCode != kProtoDataV1 {
+		//  local session id
+		buf = append(buf, rel.localSessionId[:]...)
 
-	//  acks
-	buf = append(buf, byte(ackCount))
-	for i := 0; i < sendedAckCount; i++ {
-		buf = appendUint32(buf, rel.acks[i])
-	}
+		ackCount := len(rel.acks)
+		sendedAckCount = ackCount
+		if sendedAckCount > 8 {
+			sendedAckCount = 8
+		}
 
-	//  remote session id
-	if ackCount > 0 {
-		buf = append(buf, rel.remoteSessionId[:]...)
-	}
+		//  acks
+		buf = append(buf, byte(ackCount))
+		for i := 0; i < sendedAckCount; i++ {
+			buf = appendUint32(buf, rel.acks[i])
+		}
 
-	//  packet id
-	if packet.opCode != kProtoAckV1 {
-		buf = appendUint32(buf, packet.packetId)
+		//  remote session id
+		if ackCount > 0 {
+			buf = append(buf, rel.remoteSessionId[:]...)
+		}
+
+		//  packet id
+		if packet.opCode != kProtoAckV1 {
+			buf = appendUint32(buf, packet.packetId)
+		}
 	}
 
 	//  content
@@ -281,7 +333,33 @@ func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 		log.Fatalf("can't send packet to peer: %v", err)
 	}
 
-	rel.acks = rel.acks[sendedAckCount:]
+	if packet.opCode != kProtoDataV1 {
+		rel.acks = rel.acks[sendedAckCount:]
+	}
+}
+
+func (rel *reliable) encrypt(plain []byte) []byte {
+	paddingLen := 16 - len(plain)%16
+	if paddingLen == 0 {
+		paddingLen = 16
+	}
+
+	content := make([]byte, 20+16+len(plain)+paddingLen)
+	iv := content[20:36]
+	io.ReadFull(rand.Reader, iv)
+	copy(content[20+16:], plain)
+	for i := 0; i < paddingLen; i++ {
+		content[i+20+16+len(plain)] = byte(paddingLen)
+	}
+	blocker, _ := aes.NewCipher(rel.encryptCipherKey[:])
+	encrypter := cipher.NewCBCEncrypter(blocker, iv)
+	encrypter.CryptBlocks(content[20+16:], content[20+16:])
+
+	hasher := hmac.New(sha1.New, rel.encryptDigestKey[:])
+	hasher.Write(content[20:])
+	copy(content[:20], hasher.Sum(nil))
+
+	return content
 }
 
 func (rel *reliable) Close() error                       { return nil }
@@ -359,21 +437,12 @@ func (c *client) handshake() {
 	//  key method
 	buf.WriteByte(2)
 	//  key material
-	for i := 0; i < 48; i++ {
-		b := byte(rand.Int())
-		c.reliable.localKeySource.preMaster[i] = b
-		buf.WriteByte(b)
-	}
-	for i := 0; i < 32; i++ {
-		b := byte(rand.Int())
-		c.reliable.localKeySource.random1[i] = b
-		buf.WriteByte(b)
-	}
-	for i := 0; i < 32; i++ {
-		b := byte(rand.Int())
-		c.reliable.localKeySource.random2[i] = b
-		buf.WriteByte(b)
-	}
+	io.ReadFull(rand.Reader, c.reliable.localKeySource.preMaster[:])
+	buf.Write(c.reliable.localKeySource.preMaster[:])
+	io.ReadFull(rand.Reader, c.reliable.localKeySource.random1[:])
+	buf.Write(c.reliable.localKeySource.random1[:])
+	io.ReadFull(rand.Reader, c.reliable.localKeySource.random2[:])
+	buf.Write(c.reliable.localKeySource.random2[:])
 	//  options string
 	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher BF-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
 	lenBuf := make([]byte, 2)
@@ -389,11 +458,10 @@ func (c *client) handshake() {
 	}
 
 	recvBuf := make([]byte, 1024)
-	nr, err := tlsConn.Read(recvBuf)
+	_, err = tlsConn.Read(recvBuf)
 	if err != nil {
 		log.Fatalf("can't get key from remote: %v", err)
 	}
-	log.Printf("got key buf: %#v", recvBuf[:nr])
 	//copy(c.reliable.remoteKeySource.preMaster[:], recvBuf[5:53])
 	copy(c.reliable.remoteKeySource.random1[:], recvBuf[5:37])
 	copy(c.reliable.remoteKeySource.random2[:], recvBuf[37:69])
@@ -406,12 +474,16 @@ func (c *client) handshake() {
 	prf(master, "OpenVPN key expansion",
 		c.reliable.localKeySource.random2[:], c.reliable.remoteKeySource.random2[:],
 		c.reliable.localSessionId[:], c.reliable.remoteSessionId[:], key2)
-	log.Printf("encrypt cipher: %#v", key2[:16])
-	log.Printf("encrypt digest: %#v", key2[64:84])
-	log.Printf("decrypt cipher: %#v", key2[128:144])
-	log.Printf("decrypt digest: %#v", key2[192:212])
+	copy(c.reliable.encryptCipherKey[:], key2[:16])
+	copy(c.reliable.encryptDigestKey[:], key2[64:84])
+	copy(c.reliable.decryptCipherKey[:], key2[128:144])
+	copy(c.reliable.decryptDigestKey[:], key2[192:212])
 
-	time.Sleep(time.Second)
+	for {
+		plain := <-c.reliable.plainRecvCh
+		log.Printf("recv from server: %#v", plain)
+		c.reliable.plainSendCh <- plain
+	}
 }
 
 func prf(secret []byte, label string, clientSeed, serverSeed []byte, clientSid, serverSid []byte, result []byte) {
