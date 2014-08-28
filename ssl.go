@@ -275,58 +275,57 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 	}
 }
 
-func appendUint32(buf []byte, num uint32) []byte {
+func bufWriteUint32(buf *bytes.Buffer, num uint32) {
 	var numBuf [4]byte
 	binary.BigEndian.PutUint32(numBuf[:], num)
-	return append(buf, numBuf[:]...)
+	buf.Write(numBuf[:])
 }
 
 func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
-	var buf []byte
+	buf := &bytes.Buffer{}
 
 	//  op code and key id
-	buf = append(buf, (packet.opCode<<3)|(packet.keyId&0x07))
+	buf.WriteByte((packet.opCode << 3) | (packet.keyId & 0x07))
 
-	var sendedAckCount int
+	var nAcks int
 
 	if packet.opCode != kProtoDataV1 {
 		//  local session id
-		buf = append(buf, rel.localSessionId[:]...)
+		buf.Write(rel.localSessionId[:])
 
-		ackCount := len(rel.acks)
-		sendedAckCount = ackCount
-		if sendedAckCount > 8 {
-			sendedAckCount = 8
+		nAcks = len(rel.acks)
+		if nAcks > 4 {
+			nAcks = 4
 		}
 
 		//  acks
-		buf = append(buf, byte(ackCount))
-		for i := 0; i < sendedAckCount; i++ {
-			buf = appendUint32(buf, rel.acks[i])
+		buf.WriteByte(byte(nAcks))
+		for i := 0; i < nAcks; i++ {
+			bufWriteUint32(buf, rel.acks[i])
 		}
 
 		//  remote session id
-		if ackCount > 0 {
-			buf = append(buf, rel.remoteSessionId[:]...)
+		if nAcks > 0 {
+			buf.Write(rel.remoteSessionId[:])
 		}
 
 		//  packet id
 		if packet.opCode != kProtoAckV1 {
-			buf = appendUint32(buf, packet.packetId)
+			bufWriteUint32(buf, packet.packetId)
 		}
 	}
 
 	//  content
-	buf = append(buf, packet.content...)
+	buf.Write(packet.content)
 
 	//  sending
-	_, err := rel.conn.Write(buf)
+	_, err := rel.conn.Write(buf.Bytes())
 	if err != nil {
 		log.Fatalf("can't send packet to peer: %v", err)
 	}
 
 	if packet.opCode != kProtoDataV1 {
-		rel.acks = rel.acks[sendedAckCount:]
+		rel.acks = rel.acks[nAcks:]
 	}
 }
 
@@ -470,6 +469,7 @@ func (c *client) handshake() {
 	copy(c.reliable.encryptDigestKey[:], key2[64:84])
 	copy(c.reliable.decryptCipherKey[:], key2[128:144])
 	copy(c.reliable.decryptDigestKey[:], key2[192:212])
+	log.Printf("done negotiate initial keys")
 
 	for {
 		plain := <-c.reliable.plainRecvCh
