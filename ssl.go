@@ -140,59 +140,65 @@ func (rel *reliable) loopReading(conn *net.UDPConn) {
 	}
 }
 
-func parseReliablePacket(buf []byte) *reliablePacket {
-	packet := new(reliablePacket)
+func bufReadUint32(buf *bytes.Buffer) (uint32, error) {
+	var numBuf [4]byte
+	_, err := io.ReadFull(buf, numBuf[:])
+	if err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(numBuf[:]), nil
+}
+
+func parseReliablePacket(b []byte) *reliablePacket {
+	packet := &reliablePacket{}
+	buf := bytes.NewBuffer(b)
 
 	//  op code and key id
-	if len(buf) < 1 {
+	code, err := buf.ReadByte()
+	if err != nil {
 		return nil
 	}
-	packet.opCode = buf[0] >> 3
-	packet.keyId = buf[0] & 0x07
-	buf = buf[1:]
+	packet.opCode = code >> 3
+	packet.keyId = code & 0x07
 
 	//  remote session id
-	if len(buf) < 8 {
+	_, err = io.ReadFull(buf, packet.localSessionId[:])
+	if err != nil {
 		return nil
 	}
-	copy(packet.localSessionId[:], buf[:8])
-	buf = buf[8:]
 
 	//  ack array
-	if len(buf) < 1 {
+	code, err = buf.ReadByte()
+	if err != nil {
 		return nil
 	}
-	ackCount := int(buf[0])
-	buf = buf[1:]
-	if len(buf) < ackCount*4 {
-		return nil
-	}
-	packet.acks = make([]uint32, ackCount)
-	for i := 0; i < ackCount; i++ {
-		packet.acks[i] = binary.BigEndian.Uint32(buf[:4])
-		buf = buf[4:]
+	nAcks := int(code)
+	packet.acks = make([]uint32, nAcks)
+	for i := 0; i < nAcks; i++ {
+		packet.acks[i], err = bufReadUint32(buf)
+		if err != nil {
+			return nil
+		}
 	}
 
 	//  local session id
-	if ackCount > 0 {
-		if len(buf) < 8 {
+	if nAcks > 0 {
+		_, err = io.ReadFull(buf, packet.remoteSessionId[:])
+		if err != nil {
 			return nil
 		}
-		copy(packet.remoteSessionId[:], buf[:8])
-		buf = buf[8:]
 	}
 
 	//  packet id
 	if packet.opCode != kProtoAckV1 {
-		if len(buf) < 4 {
+		packet.packetId, err = bufReadUint32(buf)
+		if err != nil {
 			return nil
 		}
-		packet.packetId = binary.BigEndian.Uint32(buf[:4])
-		buf = buf[4:]
 	}
 
 	//  content
-	packet.content = buf
+	packet.content = buf.Bytes()
 
 	return packet
 }
