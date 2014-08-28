@@ -31,14 +31,6 @@ const (
 	kProtoControlHardResetServerV2 = 8
 )
 
-func mergeOpKey(opcode, keyid byte) byte {
-	return (opcode << 3) | keyid
-}
-
-func splitOpKey(value byte) (byte, byte) {
-	return value >> 3, value & 0x07
-}
-
 type sessionId [8]byte
 type ackArray []uint32
 
@@ -155,8 +147,8 @@ func parseReliablePacket(buf []byte) *reliablePacket {
 	if len(buf) < 1 {
 		return nil
 	}
-	code := buf[0]
-	packet.opCode, packet.keyId = splitOpKey(code)
+	packet.opCode = buf[0] >> 3
+	packet.keyId = buf[0] & 0x07
 	buf = buf[1:]
 
 	//  remote session id
@@ -293,7 +285,7 @@ func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
 	var buf []byte
 
 	//  op code and key id
-	buf = append(buf, mergeOpKey(packet.opCode, rel.keyId))
+	buf = append(buf, (packet.opCode<<3)|(packet.keyId&0x07))
 
 	var sendedAckCount int
 
