@@ -17,8 +17,11 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"sync/atomic"
 	"time"
 )
+
+type stopChan chan<- struct{}
 
 const (
 	kProtoControlHardResetClientV1 = 1
@@ -34,7 +37,7 @@ const (
 type sessionId [8]byte
 type ackArray []uint32
 
-type reliablePacket struct {
+type packet struct {
 	opCode          byte
 	keyId           byte
 	localSessionId  sessionId
@@ -44,6 +47,71 @@ type reliablePacket struct {
 	content         []byte
 }
 
+type udpReceiver struct {
+	conn     *net.UDPConn
+	stopFlag uint32
+	ctrlChan chan<- *packet
+	dataChan chan<- *packet
+}
+
+func (ur *udpReceiver) start() {
+	go func() {
+		for {
+			ur.iterate()
+			if stopFlag := atomic.LoadUint32(&ur.stopFlag); stopFlag == 1 {
+				break
+			}
+		}
+	}()
+}
+
+func (ur *udpReceiver) iterate() {
+	var buf [2048]byte
+	nr, err := ur.conn.Read(buf[:])
+	if err != nil {
+		if stopFlag := atomic.LoadUint32(&ur.stopFlag); stopFlag == 1 {
+			return
+		}
+		if netErr, ok := err.(net.Error); ok {
+			if netErr.Temporary() {
+				log.Printf("ERROR udp recv: %v", netErr)
+				return
+			} else {
+				log.Fatalf("FATAL udp recv: %v", netErr)
+			}
+		} else {
+			log.Fatalf("FATAL udp recv: %v", err)
+		}
+	}
+
+	packet := parseOpCodeAndKeyId(buf[:nr])
+	if packet != nil {
+		if packet.opCode == kProtoDataV1 {
+			ur.dataChan <- packet
+		} else {
+			ur.ctrlChan <- packet
+		}
+	}
+}
+
+func (ur *udpReceiver) stop() {
+	atomic.StoreUint32(&ur.stopFlag, 1)
+	ur.conn.Close()
+}
+
+func parseOpCodeAndKeyId(buf []byte) *packet {
+	if len(buf) < 2 {
+		return nil
+	}
+	packet := &packet{
+		opCode: buf[0] >> 3,
+		keyId:  buf[0] & 0x07,
+	}
+	packet.content = make([]byte, len(buf)-1)
+	copy(packet.content, buf[1:])
+	return packet
+}
+
 type keySource2 struct {
 	preMaster [48]byte
 	random1   [32]byte
@@ -51,18 +119,19 @@ type keySource2 struct {
 }
 
 type reliable struct {
-	conn       *net.UDPConn
-	netReadCh  chan *reliablePacket
-	netWriteCh chan *reliablePacket
-	netReadBuf *bytes.Buffer
+	conn           *net.UDPConn
+	netWriteCh     chan *packet
+	netReadBuf     *bytes.Buffer
+	reliableReadCh chan *packet
 
-	reliableReadCh chan *reliablePacket
+	encdRecvChan chan *packet
+	ctrlRecvChan chan *packet
 
 	plainSendCh chan []byte
 	plainRecvCh chan []byte
 
 	currentPacketId uint32
-	pendingPackets  map[uint32]*reliablePacket
+	pendingPackets  map[uint32]*packet
 	acks            ackArray
 
 	keyId           byte
@@ -81,22 +150,23 @@ type reliable struct {
 type client struct {
 	peerAddr       string
 	conn           *net.UDPConn
-	reliableReadCh chan *reliablePacket
+	reliableReadCh chan *packet
 
 	reliable reliable
+
+	udpRecv *udpReceiver
 }
 
 func newClient(peerAddr string) *client {
 	c := &client{
 		peerAddr:       peerAddr,
-		reliableReadCh: make(chan *reliablePacket),
+		reliableReadCh: make(chan *packet),
 		reliable: reliable{
-			netReadCh:      make(chan *reliablePacket),
-			netWriteCh:     make(chan *reliablePacket),
+			netWriteCh:     make(chan *packet),
 			plainSendCh:    make(chan []byte),
 			plainRecvCh:    make(chan []byte),
 			netReadBuf:     &bytes.Buffer{},
-			pendingPackets: make(map[uint32]*reliablePacket),
+			pendingPackets: make(map[uint32]*packet),
 		},
 	}
 	c.reliable.reliableReadCh = c.reliableReadCh
@@ -114,30 +184,19 @@ func (c *client) start() {
 		log.Fatalf("can't connect to peer: %v", err)
 	}
 
+	c.reliable.encdRecvChan = make(chan *packet)
+	c.reliable.ctrlRecvChan = make(chan *packet)
+	c.udpRecv = &udpReceiver{
+		conn:     c.conn,
+		dataChan: c.reliable.encdRecvChan,
+		ctrlChan: c.reliable.ctrlRecvChan,
+	}
+	c.udpRecv.start()
+
 	c.reliable.conn = c.conn
-	go c.reliable.loopReading(c.conn)
 	go c.reliable.loopWriting(c.reliableReadCh)
 
 	c.handshake()
-}
-
-func (rel *reliable) loopReading(conn *net.UDPConn) {
-	for {
-		var buf [2000]byte
-		nr, err := conn.Read(buf[:])
-		if err != nil {
-			log.Fatalf("can't recv packet from peer: %v", err)
-		}
-		if buf[0]>>3 == 6 {
-			plain := rel.decrypt(buf[1:nr])
-			rel.plainRecvCh <- plain
-			continue
-		}
-		packet := parseReliablePacket(buf[:nr])
-		if packet != nil {
-			rel.netReadCh <- packet
-		}
-	}
 }
 
 func bufReadUint32(buf *bytes.Buffer) (uint32, error) {
@@ -149,26 +208,17 @@ func bufReadUint32(buf *bytes.Buffer) (uint32, error) {
 	return binary.BigEndian.Uint32(numBuf[:]), nil
 }
 
-func parseReliablePacket(b []byte) *reliablePacket {
-	packet := &reliablePacket{}
-	buf := bytes.NewBuffer(b)
-
-	//  op code and key id
-	code, err := buf.ReadByte()
-	if err != nil {
-		return nil
-	}
-	packet.opCode = code >> 3
-	packet.keyId = code & 0x07
+func parseCtrlPacket(packet *packet) *packet {
+	buf := bytes.NewBuffer(packet.content)
 
 	//  remote session id
-	_, err = io.ReadFull(buf, packet.localSessionId[:])
+	_, err := io.ReadFull(buf, packet.localSessionId[:])
 	if err != nil {
 		return nil
 	}
 
 	//  ack array
-	code, err = buf.ReadByte()
+	code, err := buf.ReadByte()
 	if err != nil {
 		return nil
 	}
@@ -232,7 +282,7 @@ func (rel *reliable) decrypt(content []byte) []byte {
 	return plain
 }
 
-func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
+func (rel *reliable) loopWriting(reliableReadCh chan<- *packet) {
 	for {
 		var resendTimeout <-chan time.Time
 		if len(rel.pendingPackets) > 0 {
@@ -245,7 +295,10 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 		}
 
 		select {
-		case packet := <-rel.netReadCh:
+		case packet := <-rel.encdRecvChan:
+			rel.plainRecvCh <- rel.decrypt(packet.content)
+		case packet := <-rel.ctrlRecvChan:
+			packet = parseCtrlPacket(packet)
 			rel.acks = append(rel.acks, packet.packetId)
 			for _, ack := range packet.acks {
 				if _, ok := rel.pendingPackets[ack]; ok {
@@ -270,9 +323,9 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *reliablePacket) {
 				rel.sendReliablePacket(packet)
 			}
 		case <-ackTimeout:
-			rel.sendReliablePacket(&reliablePacket{opCode: kProtoAckV1})
+			rel.sendReliablePacket(&packet{opCode: kProtoAckV1})
 		case plain := <-rel.plainSendCh:
-			packet := &reliablePacket{
+			packet := &packet{
 				opCode:  kProtoDataV1,
 				content: rel.encrypt(plain),
 			}
@@ -287,7 +340,7 @@ func bufWriteUint32(buf *bytes.Buffer, num uint32) {
 	buf.Write(numBuf[:])
 }
 
-func (rel *reliable) sendReliablePacket(packet *reliablePacket) {
+func (rel *reliable) sendReliablePacket(packet *packet) {
 	buf := &bytes.Buffer{}
 
 	//  op code and key id
@@ -379,7 +432,7 @@ func (rel *reliable) Read(b []byte) (n int, err error) {
 func (rel *reliable) Write(b []byte) (n int, err error) {
 	buf := make([]byte, len(b))
 	copy(buf, b)
-	packet := &reliablePacket{
+	packet := &packet{
 		opCode:  kProtoControlV1,
 		content: buf,
 	}
@@ -388,7 +441,7 @@ func (rel *reliable) Write(b []byte) (n int, err error) {
 }
 
 func (c *client) handshake() {
-	hardResetPacket := &reliablePacket{
+	hardResetPacket := &packet{
 		opCode: kProtoControlHardResetClientV2,
 	}
 	c.reliable.netWriteCh <- hardResetPacket
