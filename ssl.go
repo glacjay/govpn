@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-type stopChan chan<- struct{}
+type stopChan chan struct{}
 
 const (
 	kProtoControlHardResetClientV1 = 1
@@ -57,25 +57,29 @@ type udpReceiver struct {
 func (ur *udpReceiver) start() {
 	go func() {
 		for {
-			ur.iterate()
-			if stopFlag := atomic.LoadUint32(&ur.stopFlag); stopFlag == 1 {
+			if !ur.iterate() {
 				break
 			}
 		}
 	}()
 }
 
-func (ur *udpReceiver) iterate() {
+func (ur *udpReceiver) stop() {
+	atomic.StoreUint32(&ur.stopFlag, 1)
+	ur.conn.Close()
+}
+
+func (ur *udpReceiver) iterate() bool {
 	var buf [2048]byte
 	nr, err := ur.conn.Read(buf[:])
 	if err != nil {
 		if stopFlag := atomic.LoadUint32(&ur.stopFlag); stopFlag == 1 {
-			return
+			return false
 		}
 		if netErr, ok := err.(net.Error); ok {
 			if netErr.Temporary() {
 				log.Printf("ERROR udp recv: %v", netErr)
-				return
+				return true
 			} else {
 				log.Fatalf("FATAL udp recv: %v", netErr)
 			}
@@ -92,11 +96,8 @@ func (ur *udpReceiver) iterate() {
 			ur.ctrlChan <- packet
 		}
 	}
-}
 
-func (ur *udpReceiver) stop() {
-	atomic.StoreUint32(&ur.stopFlag, 1)
-	ur.conn.Close()
+	return true
 }
 
 func parseOpCodeAndKeyId(buf []byte) *packet {
@@ -112,6 +113,131 @@ func parseOpCodeAndKeyId(buf []byte) *packet {
 	return packet
 }
 
+type key2 struct {
+	encryptCipher [16]byte
+	encryptDigest [20]byte
+	decryptCipher [16]byte
+	decryptDigest [20]byte
+}
+
+type dataTransporter struct {
+	conn     *net.UDPConn
+	stopChan stopChan
+
+	cipherRecvChan <-chan *packet
+	plainSendChan  chan<- []byte
+	plainRecvChan  <-chan []byte
+
+	keys *key2
+}
+
+func (dt *dataTransporter) start() {
+	go func() {
+		for {
+			if !dt.iterate() {
+				break
+			}
+		}
+	}()
+}
+
+func (dt *dataTransporter) stop() {
+	dt.stopChan <- struct{}{}
+}
+
+func (dt *dataTransporter) iterate() bool {
+	select {
+	case <-dt.stopChan:
+		return false
+
+	case packet := <-dt.cipherRecvChan:
+		plain := dt.decrypt(packet.content)
+		dt.plainSendChan <- plain
+
+	case plain := <-dt.plainRecvChan:
+		packet := &packet{
+			opCode:  kProtoDataV1,
+			content: dt.encrypt(plain),
+		}
+		sendDataPacket(dt.conn, packet)
+	}
+
+	return true
+}
+
+func (dt *dataTransporter) decrypt(content []byte) []byte {
+	hasher := hmac.New(sha1.New, dt.keys.decryptDigest[:])
+	if len(content) < hasher.Size() {
+		log.Printf("ERROR plain size too small")
+		return nil
+	}
+	hasher.Write(content[hasher.Size():])
+	sig := hasher.Sum(nil)
+	if !bytes.Equal(sig, content[:hasher.Size()]) {
+		log.Printf("ERROR invalid signature")
+		return nil
+	}
+	content = content[hasher.Size():]
+
+	iv := content[:16]
+	content = content[16:]
+	blocker, _ := aes.NewCipher(dt.keys.decryptCipher[:])
+	decrypter := cipher.NewCBCDecrypter(blocker, iv)
+	plain := make([]byte, len(content))
+	decrypter.CryptBlocks(plain, content)
+
+	//packetId := binary.BigEndian.Uint32(plain[:4])
+	//plain = plain[4:]
+	paddingLen := int(plain[len(plain)-1])
+	if paddingLen > len(plain) {
+		log.Printf("ERROR invalid padding")
+		return nil
+	}
+	plain = plain[:len(plain)-paddingLen]
+
+	return plain
+}
+
+func (dt *dataTransporter) encrypt(plain []byte) []byte {
+	paddingLen := 16 - len(plain)%16
+	if paddingLen == 0 {
+		paddingLen = 16
+	}
+
+	content := make([]byte, 20+16+len(plain)+paddingLen)
+	iv := content[20:36]
+	io.ReadFull(rand.Reader, iv)
+	copy(content[20+16:], plain)
+	for i := 0; i < paddingLen; i++ {
+		content[i+20+16+len(plain)] = byte(paddingLen)
+	}
+	blocker, _ := aes.NewCipher(dt.keys.encryptCipher[:])
+	encrypter := cipher.NewCBCEncrypter(blocker, iv)
+	encrypter.CryptBlocks(content[20+16:], content[20+16:])
+
+	hasher := hmac.New(sha1.New, dt.keys.encryptDigest[:])
+	hasher.Write(content[20:])
+	copy(content[:20], hasher.Sum(nil))
+
+	return content
+}
+
+func sendDataPacket(conn *net.UDPConn, packet *packet) {
+	buf := &bytes.Buffer{}
+
+	//  op code and key id
+	buf.WriteByte((packet.opCode << 3) | (packet.keyId & 0x07))
+
+	//  content
+	buf.Write(packet.content)
+
+	//  sending
+	_, err := conn.Write(buf.Bytes())
+	if err != nil {
+		log.Fatalf("can't send packet to peer: %v", err)
+	}
+}
+
 type keySource2 struct {
 	preMaster [48]byte
 	random1   [32]byte
@@ -123,12 +249,7 @@ type reliable struct {
 	netWriteCh     chan *packet
 	netReadBuf     *bytes.Buffer
 	reliableReadCh chan *packet
-
-	encdRecvChan chan *packet
-	ctrlRecvChan chan *packet
-
-	plainSendCh chan []byte
-	plainRecvCh chan []byte
+	ctrlRecvChan   chan *packet
 
 	currentPacketId uint32
 	pendingPackets  map[uint32]*packet
@@ -140,11 +261,6 @@ type reliable struct {
 
 	localKeySource  keySource2
 	remoteKeySource keySource2
-
-	encryptCipherKey [16]byte
-	encryptDigestKey [20]byte
-	decryptCipherKey [16]byte
-	decryptDigestKey [20]byte
 }
 
 type client struct {
@@ -152,19 +268,23 @@ type client struct {
 	conn           *net.UDPConn
 	reliableReadCh chan *packet
 
+	plainSendChan chan []byte
+	plainRecvChan chan []byte
+
 	reliable reliable
 
-	udpRecv *udpReceiver
+	udpRecv   *udpReceiver
+	dataTrans *dataTransporter
 }
 
 func newClient(peerAddr string) *client {
 	c := &client{
 		peerAddr:       peerAddr,
 		reliableReadCh: make(chan *packet),
+		plainSendChan:  make(chan []byte),
+		plainRecvChan:  make(chan []byte),
 		reliable: reliable{
 			netWriteCh:     make(chan *packet),
-			plainSendCh:    make(chan []byte),
-			plainRecvCh:    make(chan []byte),
 			netReadBuf:     &bytes.Buffer{},
 			pendingPackets: make(map[uint32]*packet),
 		},
@@ -184,14 +304,23 @@ func (c *client) start() {
 		log.Fatalf("can't connect to peer: %v", err)
 	}
 
-	c.reliable.encdRecvChan = make(chan *packet)
+	ciphertextRecvChan := make(chan *packet)
 	c.reliable.ctrlRecvChan = make(chan *packet)
 	c.udpRecv = &udpReceiver{
 		conn:     c.conn,
-		dataChan: c.reliable.encdRecvChan,
+		dataChan: ciphertextRecvChan,
 		ctrlChan: c.reliable.ctrlRecvChan,
 	}
 	c.udpRecv.start()
+
+	c.dataTrans = &dataTransporter{
+		conn:           c.conn,
+		stopChan:       make(chan struct{}),
+		cipherRecvChan: ciphertextRecvChan,
+		plainSendChan:  c.plainSendChan,
+		plainRecvChan:  c.plainRecvChan,
+	}
+	c.dataTrans.start()
 
 	c.reliable.conn = c.conn
 	go c.reliable.loopWriting(c.reliableReadCh)
@@ -253,35 +382,6 @@ func parseCtrlPacket(packet *packet) *packet {
 	return packet
 }
 
-func (rel *reliable) decrypt(content []byte) []byte {
-	hasher := hmac.New(sha1.New, rel.decryptDigestKey[:])
-	if len(content) < hasher.Size() {
-		log.Printf("ERROR plain size too small")
-		return nil
-	}
-	hasher.Write(content[hasher.Size():])
-	sig := hasher.Sum(nil)
-	if !bytes.Equal(sig, content[:hasher.Size()]) {
-		log.Printf("ERROR invalid signature")
-		return nil
-	}
-	content = content[hasher.Size():]
-
-	iv := content[:16]
-	content = content[16:]
-	blocker, _ := aes.NewCipher(rel.decryptCipherKey[:])
-	decrypter := cipher.NewCBCDecrypter(blocker, iv)
-	plain := make([]byte, len(content))
-	decrypter.CryptBlocks(plain, content)
-
-	//packetId := binary.BigEndian.Uint32(plain[:4])
-	//plain = plain[4:]
-	paddingLen := int(plain[len(plain)-1])
-	plain = plain[:len(plain)-paddingLen]
-
-	return plain
-}
-
 func (rel *reliable) loopWriting(reliableReadCh chan<- *packet) {
 	for {
 		var resendTimeout <-chan time.Time
@@ -295,8 +395,6 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *packet) {
 		}
 
 		select {
-		case packet := <-rel.encdRecvChan:
-			rel.plainRecvCh <- rel.decrypt(packet.content)
 		case packet := <-rel.ctrlRecvChan:
 			packet = parseCtrlPacket(packet)
 			rel.acks = append(rel.acks, packet.packetId)
@@ -324,12 +422,6 @@ func (rel *reliable) loopWriting(reliableReadCh chan<- *packet) {
 			}
 		case <-ackTimeout:
 			rel.sendReliablePacket(&packet{opCode: kProtoAckV1})
-		case plain := <-rel.plainSendCh:
-			packet := &packet{
-				opCode:  kProtoDataV1,
-				content: rel.encrypt(plain),
-			}
-			rel.sendReliablePacket(packet)
 		}
 	}
 }
@@ -386,30 +478,6 @@ func (rel *reliable) sendReliablePacket(packet *packet) {
 	if packet.opCode != kProtoDataV1 {
 		rel.acks = rel.acks[nAcks:]
 	}
-}
-
-func (rel *reliable) encrypt(plain []byte) []byte {
-	paddingLen := 16 - len(plain)%16
-	if paddingLen == 0 {
-		paddingLen = 16
-	}
-
-	content := make([]byte, 20+16+len(plain)+paddingLen)
-	iv := content[20:36]
-	io.ReadFull(rand.Reader, iv)
-	copy(content[20+16:], plain)
-	for i := 0; i < paddingLen; i++ {
-		content[i+20+16+len(plain)] = byte(paddingLen)
-	}
-	blocker, _ := aes.NewCipher(rel.encryptCipherKey[:])
-	encrypter := cipher.NewCBCEncrypter(blocker, iv)
-	encrypter.CryptBlocks(content[20+16:], content[20+16:])
-
-	hasher := hmac.New(sha1.New, rel.encryptDigestKey[:])
-	hasher.Write(content[20:])
-	copy(content[:20], hasher.Sum(nil))
-
-	return content
 }
 
 func (rel *reliable) Close() error                       { return nil }
@@ -520,20 +588,21 @@ func (c *client) handshake() {
 	prf(c.reliable.localKeySource.preMaster[:], "OpenVPN master secret",
 		c.reliable.localKeySource.random1[:], c.reliable.remoteKeySource.random1[:],
 		nil, nil, master)
-	key2 := make([]byte, 256)
+	keyBuf := make([]byte, 256)
 	prf(master, "OpenVPN key expansion",
 		c.reliable.localKeySource.random2[:], c.reliable.remoteKeySource.random2[:],
-		c.reliable.localSessionId[:], c.reliable.remoteSessionId[:], key2)
-	copy(c.reliable.encryptCipherKey[:], key2[:16])
-	copy(c.reliable.encryptDigestKey[:], key2[64:84])
-	copy(c.reliable.decryptCipherKey[:], key2[128:144])
-	copy(c.reliable.decryptDigestKey[:], key2[192:212])
+		c.reliable.localSessionId[:], c.reliable.remoteSessionId[:], keyBuf)
+	c.dataTrans.keys = &key2{}
+	copy(c.dataTrans.keys.encryptCipher[:], keyBuf[:16])
+	copy(c.dataTrans.keys.encryptDigest[:], keyBuf[64:84])
+	copy(c.dataTrans.keys.decryptCipher[:], keyBuf[128:144])
+	copy(c.dataTrans.keys.decryptDigest[:], keyBuf[192:212])
 	log.Printf("done negotiate initial keys")
 
 	for {
-		plain := <-c.reliable.plainRecvCh
+		plain := <-c.plainSendChan
 		log.Printf("recv from server: %#v", plain)
-		c.reliable.plainSendCh <- plain
+		c.plainRecvChan <- plain
 	}
 }
 
