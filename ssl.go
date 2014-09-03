@@ -238,94 +238,102 @@ func sendDataPacket(conn *net.UDPConn, packet *packet) {
 	}
 }
 
-type keySource2 struct {
-	preMaster [48]byte
-	random1   [32]byte
-	random2   [32]byte
-}
+type reliableUdp struct {
+	stopChan stopChan
 
-type reliable struct {
-	conn           *net.UDPConn
-	netWriteCh     chan *packet
-	netReadBuf     *bytes.Buffer
-	reliableReadCh chan *packet
-	ctrlRecvChan   chan *packet
+	ctrlSendChan    chan *packet
+	conn            *net.UDPConn
+	sendingPacketId uint32
+	sendingPackets  map[uint32]*packet
 
-	currentPacketId uint32
-	pendingPackets  map[uint32]*packet
-	acks            ackArray
+	ctrlRecvChan  <-chan *packet
+	sslRecvChan   chan *packet
+	sslRecvBuf    bytes.Buffer
+	receivingAcks ackArray
 
+	connected       bool
 	keyId           byte
 	localSessionId  sessionId
 	remoteSessionId sessionId
-
-	localKeySource  keySource2
-	remoteKeySource keySource2
 }
 
-type client struct {
-	peerAddr       string
-	conn           *net.UDPConn
-	reliableReadCh chan *packet
-
-	plainSendChan chan []byte
-	plainRecvChan chan []byte
-
-	reliable reliable
-
-	udpRecv   *udpReceiver
-	dataTrans *dataTransporter
-}
-
-func newClient(peerAddr string) *client {
-	c := &client{
-		peerAddr:       peerAddr,
-		reliableReadCh: make(chan *packet),
-		plainSendChan:  make(chan []byte),
-		plainRecvChan:  make(chan []byte),
-		reliable: reliable{
-			netWriteCh:     make(chan *packet),
-			netReadBuf:     &bytes.Buffer{},
-			pendingPackets: make(map[uint32]*packet),
-		},
-	}
-	c.reliable.reliableReadCh = c.reliableReadCh
-	io.ReadFull(rand.Reader, c.reliable.localSessionId[:])
-	return c
-}
-
-func (c *client) start() {
-	addr, err := net.ResolveUDPAddr("udp", c.peerAddr)
-	if err != nil {
-		log.Fatalf("can't resolve peer addr '%s': %v", c.peerAddr, err)
-	}
-	c.conn, err = net.DialUDP("udp", nil, addr)
-	if err != nil {
-		log.Fatalf("can't connect to peer: %v", err)
-	}
-
-	ciphertextRecvChan := make(chan *packet)
-	c.reliable.ctrlRecvChan = make(chan *packet)
-	c.udpRecv = &udpReceiver{
-		conn:     c.conn,
-		dataChan: ciphertextRecvChan,
-		ctrlChan: c.reliable.ctrlRecvChan,
-	}
-	c.udpRecv.start()
-
-	c.dataTrans = &dataTransporter{
-		conn:           c.conn,
+func dialReliableUdp(conn *net.UDPConn, ctrlRecvChan <-chan *packet) *reliableUdp {
+	ru := &reliableUdp{
 		stopChan:       make(chan struct{}),
-		cipherRecvChan: ciphertextRecvChan,
-		plainSendChan:  c.plainSendChan,
-		plainRecvChan:  c.plainRecvChan,
+		conn:           conn,
+		ctrlSendChan:   make(chan *packet),
+		sendingPackets: make(map[uint32]*packet),
+		ctrlRecvChan:   ctrlRecvChan,
+		sslRecvChan:    make(chan *packet),
 	}
-	c.dataTrans.start()
+	io.ReadFull(rand.Reader, ru.localSessionId[:])
 
-	c.reliable.conn = c.conn
-	go c.reliable.loopWriting(c.reliableReadCh)
+	ru.start()
+	ru.ctrlSendChan <- &packet{
+		opCode: kProtoControlHardResetClientV2,
+	}
 
-	c.handshake()
+	return ru
+}
+
+func (ru *reliableUdp) start() {
+	go func() {
+		for {
+			if !ru.iterate() {
+				break
+			}
+		}
+	}()
+}
+
+func (ru *reliableUdp) stop() {
+	ru.stopChan <- struct{}{}
+}
+
+func (ru *reliableUdp) iterate() bool {
+	var resendTimeout <-chan time.Time
+	if len(ru.sendingPackets) > 0 {
+		resendTimeout = time.After(time.Second)
+	}
+
+	var ackTimeout <-chan time.Time
+	if len(ru.receivingAcks) > 0 {
+		ackTimeout = time.After(time.Microsecond)
+	}
+
+	select {
+	case packet := <-ru.ctrlRecvChan:
+		packet = parseCtrlPacket(packet)
+		ru.receivingAcks = append(ru.receivingAcks, packet.packetId)
+		for _, ack := range packet.acks {
+			if _, ok := ru.sendingPackets[ack]; ok {
+				delete(ru.sendingPackets, ack)
+			}
+		}
+		switch packet.opCode {
+		case kProtoControlHardResetServerV2:
+			copy(ru.remoteSessionId[:], packet.localSessionId[:])
+			ru.connected = true
+		case kProtoControlV1:
+			ru.sslRecvChan <- packet
+		}
+
+	case packet := <-ru.ctrlSendChan:
+		packet.packetId = ru.sendingPacketId
+		ru.sendingPacketId++
+		ru.sendCtrlPacket(packet)
+		ru.sendingPackets[packet.packetId] = packet
+
+	case <-resendTimeout:
+		for _, packet := range ru.sendingPackets {
+			ru.sendCtrlPacket(packet)
+		}
+
+	case <-ackTimeout:
+		ru.sendCtrlPacket(&packet{opCode: kProtoAckV1})
+	}
+
+	return true
 }
 
 func bufReadUint32(buf *bytes.Buffer) (uint32, error) {
@@ -382,145 +390,143 @@ func parseCtrlPacket(packet *packet) *packet {
 	return packet
 }
 
-func (rel *reliable) loopWriting(reliableReadCh chan<- *packet) {
-	for {
-		var resendTimeout <-chan time.Time
-		if len(rel.pendingPackets) > 0 {
-			resendTimeout = time.After(time.Second)
-		}
-
-		var ackTimeout <-chan time.Time
-		if len(rel.acks) > 0 {
-			ackTimeout = time.After(time.Nanosecond)
-		}
-
-		select {
-		case packet := <-rel.ctrlRecvChan:
-			packet = parseCtrlPacket(packet)
-			rel.acks = append(rel.acks, packet.packetId)
-			for _, ack := range packet.acks {
-				if _, ok := rel.pendingPackets[ack]; ok {
-					delete(rel.pendingPackets, ack)
-				}
-			}
-			switch packet.opCode {
-			case kProtoControlHardResetServerV2:
-				reliableReadCh <- packet
-			case kProtoControlV1:
-				reliableReadCh <- packet
-			}
-		case packet := <-rel.netWriteCh:
-			if packet.opCode != kProtoAckV1 {
-				packet.packetId = rel.currentPacketId
-				rel.currentPacketId++
-			}
-			rel.sendReliablePacket(packet)
-			rel.pendingPackets[packet.packetId] = packet
-		case <-resendTimeout:
-			for _, packet := range rel.pendingPackets {
-				rel.sendReliablePacket(packet)
-			}
-		case <-ackTimeout:
-			rel.sendReliablePacket(&packet{opCode: kProtoAckV1})
-		}
-	}
-}
-
 func bufWriteUint32(buf *bytes.Buffer, num uint32) {
 	var numBuf [4]byte
 	binary.BigEndian.PutUint32(numBuf[:], num)
 	buf.Write(numBuf[:])
 }
 
-func (rel *reliable) sendReliablePacket(packet *packet) {
+func (ru *reliableUdp) sendCtrlPacket(packet *packet) {
 	buf := &bytes.Buffer{}
 
 	//  op code and key id
 	buf.WriteByte((packet.opCode << 3) | (packet.keyId & 0x07))
 
-	var nAcks int
+	//  local session id
+	buf.Write(ru.localSessionId[:])
 
-	if packet.opCode != kProtoDataV1 {
-		//  local session id
-		buf.Write(rel.localSessionId[:])
+	nAcks := len(ru.receivingAcks)
+	if nAcks > 4 {
+		nAcks = 4
+	}
 
-		nAcks = len(rel.acks)
-		if nAcks > 4 {
-			nAcks = 4
-		}
+	//  acks
+	buf.WriteByte(byte(nAcks))
+	for i := 0; i < nAcks; i++ {
+		bufWriteUint32(buf, ru.receivingAcks[i])
+	}
 
-		//  acks
-		buf.WriteByte(byte(nAcks))
-		for i := 0; i < nAcks; i++ {
-			bufWriteUint32(buf, rel.acks[i])
-		}
+	//  remote session id
+	if nAcks > 0 {
+		buf.Write(ru.remoteSessionId[:])
+	}
 
-		//  remote session id
-		if nAcks > 0 {
-			buf.Write(rel.remoteSessionId[:])
-		}
-
-		//  packet id
-		if packet.opCode != kProtoAckV1 {
-			bufWriteUint32(buf, packet.packetId)
-		}
+	//  packet id
+	if packet.opCode != kProtoAckV1 {
+		bufWriteUint32(buf, packet.packetId)
 	}
 
 	//  content
 	buf.Write(packet.content)
 
 	//  sending
-	_, err := rel.conn.Write(buf.Bytes())
+	_, err := ru.conn.Write(buf.Bytes())
 	if err != nil {
 		log.Fatalf("can't send packet to peer: %v", err)
 	}
 
 	if packet.opCode != kProtoDataV1 {
-		rel.acks = rel.acks[nAcks:]
+		ru.receivingAcks = ru.receivingAcks[nAcks:]
 	}
 }
 
-func (rel *reliable) Close() error                       { return nil }
-func (rel *reliable) LocalAddr() net.Addr                { return nil }
-func (rel *reliable) RemoteAddr() net.Addr               { return nil }
-func (rel *reliable) SetDeadline(t time.Time) error      { return nil }
-func (rel *reliable) SetReadDeadline(t time.Time) error  { return nil }
-func (rel *reliable) SetWriteDeadline(t time.Time) error { return nil }
+func (ru *reliableUdp) Close() error                       { return nil }
+func (ru *reliableUdp) LocalAddr() net.Addr                { return nil }
+func (ru *reliableUdp) RemoteAddr() net.Addr               { return nil }
+func (ru *reliableUdp) SetDeadline(t time.Time) error      { return nil }
+func (ru *reliableUdp) SetReadDeadline(t time.Time) error  { return nil }
+func (ru *reliableUdp) SetWriteDeadline(t time.Time) error { return nil }
 
-func (rel *reliable) Read(b []byte) (n int, err error) {
-	for rel.netReadBuf.Len() == 0 {
-		packet := <-rel.reliableReadCh
-		if packet.opCode == kProtoControlV1 {
-			rel.netReadBuf.Write(packet.content)
-		}
+func (ru *reliableUdp) Read(b []byte) (n int, err error) {
+	for ru.sslRecvBuf.Len() == 0 {
+		packet := <-ru.sslRecvChan
+		ru.sslRecvBuf.Write(packet.content)
 	}
-	return rel.netReadBuf.Read(b)
+	return ru.sslRecvBuf.Read(b)
 }
 
-func (rel *reliable) Write(b []byte) (n int, err error) {
+func (ru *reliableUdp) Write(b []byte) (n int, err error) {
 	buf := make([]byte, len(b))
 	copy(buf, b)
 	packet := &packet{
 		opCode:  kProtoControlV1,
 		content: buf,
 	}
-	rel.netWriteCh <- packet
+	ru.ctrlSendChan <- packet
 	return len(b), nil
 }
 
+type keySource2 struct {
+	preMaster [48]byte
+	random1   [32]byte
+	random2   [32]byte
+}
+
+type client struct {
+	peerAddr string
+	conn     *net.UDPConn
+
+	plainSendChan chan []byte
+	plainRecvChan chan []byte
+
+	udpRecv     *udpReceiver
+	dataTrans   *dataTransporter
+	reliableUdp *reliableUdp
+}
+
+func newClient(peerAddr string) *client {
+	c := &client{
+		peerAddr:      peerAddr,
+		plainSendChan: make(chan []byte),
+		plainRecvChan: make(chan []byte),
+	}
+	return c
+}
+
+func (c *client) start() {
+	addr, err := net.ResolveUDPAddr("udp", c.peerAddr)
+	if err != nil {
+		log.Fatalf("can't resolve peer addr '%s': %v", c.peerAddr, err)
+	}
+	c.conn, err = net.DialUDP("udp", nil, addr)
+	if err != nil {
+		log.Fatalf("can't connect to peer: %v", err)
+	}
+
+	ciphertextRecvChan := make(chan *packet)
+	ctrlRecvChan := make(chan *packet)
+	c.udpRecv = &udpReceiver{
+		conn:     c.conn,
+		dataChan: ciphertextRecvChan,
+		ctrlChan: ctrlRecvChan,
+	}
+	c.udpRecv.start()
+
+	c.dataTrans = &dataTransporter{
+		conn:           c.conn,
+		stopChan:       make(chan struct{}),
+		cipherRecvChan: ciphertextRecvChan,
+		plainSendChan:  c.plainSendChan,
+		plainRecvChan:  c.plainRecvChan,
+	}
+	c.dataTrans.start()
+
+	c.reliableUdp = dialReliableUdp(c.conn, ctrlRecvChan)
+
+	c.handshake()
+}
+
 func (c *client) handshake() {
-	hardResetPacket := &packet{
-		opCode: kProtoControlHardResetClientV2,
-	}
-	c.reliable.netWriteCh <- hardResetPacket
-
-	packet := <-c.reliableReadCh
-	if bytes.Equal(c.reliable.remoteSessionId[:], make([]byte, 8)) {
-		copy(c.reliable.remoteSessionId[:], packet.localSessionId[:])
-	} else {
-		log.Fatalf("this ack is not for me")
-	}
-
 	caCertFileContent, err := ioutil.ReadFile("test/ca.cer")
 	if err != nil {
 		log.Fatalf("can't read ca cert file: %v", err)
@@ -539,14 +545,16 @@ func (c *client) handshake() {
 	tlsConfig := &tls.Config{
 		Certificates:       []tls.Certificate{clientCert},
 		RootCAs:            caCerts,
-		ClientAuth:         tls.RequireAndVerifyClientCert,
 		InsecureSkipVerify: true,
 	}
-	tlsConn := tls.Client(&c.reliable, tlsConfig)
+	tlsConn := tls.Client(c.reliableUdp, tlsConfig)
 	err = tlsConn.Handshake()
 	if err != nil {
 		log.Fatalf("can't handshake tls with remote: %v", err)
 	}
+
+	localKeySource := &keySource2{}
+	remoteKeySource := &keySource2{}
 
 	//  openvpn client send key
 	buf := &bytes.Buffer{}
@@ -555,12 +563,12 @@ func (c *client) handshake() {
 	//  key method
 	buf.WriteByte(2)
 	//  key material
-	io.ReadFull(rand.Reader, c.reliable.localKeySource.preMaster[:])
-	buf.Write(c.reliable.localKeySource.preMaster[:])
-	io.ReadFull(rand.Reader, c.reliable.localKeySource.random1[:])
-	buf.Write(c.reliable.localKeySource.random1[:])
-	io.ReadFull(rand.Reader, c.reliable.localKeySource.random2[:])
-	buf.Write(c.reliable.localKeySource.random2[:])
+	io.ReadFull(rand.Reader, localKeySource.preMaster[:])
+	buf.Write(localKeySource.preMaster[:])
+	io.ReadFull(rand.Reader, localKeySource.random1[:])
+	buf.Write(localKeySource.random1[:])
+	io.ReadFull(rand.Reader, localKeySource.random2[:])
+	buf.Write(localKeySource.random2[:])
 	//  options string
 	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher BF-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
 	lenBuf := make([]byte, 2)
@@ -580,18 +588,18 @@ func (c *client) handshake() {
 	if err != nil {
 		log.Fatalf("can't get key from remote: %v", err)
 	}
-	//copy(c.reliable.remoteKeySource.preMaster[:], recvBuf[5:53])
-	copy(c.reliable.remoteKeySource.random1[:], recvBuf[5:37])
-	copy(c.reliable.remoteKeySource.random2[:], recvBuf[37:69])
+	//copy(remoteKeySource.preMaster[:], recvBuf[5:53])
+	copy(remoteKeySource.random1[:], recvBuf[5:37])
+	copy(remoteKeySource.random2[:], recvBuf[37:69])
 
 	master := make([]byte, 48)
-	prf(c.reliable.localKeySource.preMaster[:], "OpenVPN master secret",
-		c.reliable.localKeySource.random1[:], c.reliable.remoteKeySource.random1[:],
+	prf(localKeySource.preMaster[:], "OpenVPN master secret",
+		localKeySource.random1[:], remoteKeySource.random1[:],
 		nil, nil, master)
 	keyBuf := make([]byte, 256)
 	prf(master, "OpenVPN key expansion",
-		c.reliable.localKeySource.random2[:], c.reliable.remoteKeySource.random2[:],
-		c.reliable.localSessionId[:], c.reliable.remoteSessionId[:], keyBuf)
+		localKeySource.random2[:], remoteKeySource.random2[:],
+		c.reliableUdp.localSessionId[:], c.reliableUdp.remoteSessionId[:], keyBuf)
 	c.dataTrans.keys = &key2{}
 	copy(c.dataTrans.keys.encryptCipher[:], keyBuf[:16])
 	copy(c.dataTrans.keys.encryptDigest[:], keyBuf[64:84])
