@@ -466,10 +466,138 @@ func (ru *reliableUdp) Write(b []byte) (n int, err error) {
 	return len(b), nil
 }
 
+type tlsTransporter struct {
+	stopChan stopChan
+
+	reliableUdp *reliableUdp
+	conn        *tls.Conn
+
+	keysChan chan<- *key2
+	sendChan <-chan string
+	recvChan chan<- string
+}
+
+func newTlsTransporter(reliableUdp *reliableUdp, keysChan chan<- *key2,
+	sendChan <-chan string, recvChan chan<- string) *tlsTransporter {
+
+	return &tlsTransporter{
+		stopChan:    make(stopChan),
+		reliableUdp: reliableUdp,
+		keysChan:    keysChan,
+		sendChan:    sendChan,
+		recvChan:    recvChan,
+	}
+}
+
+func (tt *tlsTransporter) start() {
+	tt.handshake()
+	go func() {
+		for {
+			if !tt.iterate() {
+				break
+			}
+		}
+	}()
+}
+
+func (tt *tlsTransporter) stop() {
+	tt.stopChan <- struct{}{}
+}
+
 type keySource2 struct {
 	preMaster [48]byte
 	random1   [32]byte
 	random2   [32]byte
+}
+
+func (tt *tlsTransporter) handshake() {
+	caCertFileContent, err := ioutil.ReadFile("test/ca.cer")
+	if err != nil {
+		log.Fatalf("can't read ca cert file: %v", err)
+	}
+	caCerts := x509.NewCertPool()
+	ok := caCerts.AppendCertsFromPEM(caCertFileContent)
+	if !ok {
+		log.Fatalf("can't parse ca cert file")
+	}
+
+	clientCert, err := tls.LoadX509KeyPair("test/client.pem", "test/client.pem")
+	if err != nil {
+		log.Fatalf("can't load client cert and key: %v", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{clientCert},
+		RootCAs:            caCerts,
+		InsecureSkipVerify: true,
+	}
+	tt.conn = tls.Client(tt.reliableUdp, tlsConfig)
+	err = tt.conn.Handshake()
+	if err != nil {
+		log.Fatalf("can't handshake tls with remote: %v", err)
+	}
+
+	localKeySource := &keySource2{}
+	remoteKeySource := &keySource2{}
+
+	//  openvpn client send key
+	buf := &bytes.Buffer{}
+	//  uint32 0
+	buf.Write([]byte{0, 0, 0, 0})
+	//  key method
+	buf.WriteByte(2)
+	//  key material
+	io.ReadFull(rand.Reader, localKeySource.preMaster[:])
+	buf.Write(localKeySource.preMaster[:])
+	io.ReadFull(rand.Reader, localKeySource.random1[:])
+	buf.Write(localKeySource.random1[:])
+	io.ReadFull(rand.Reader, localKeySource.random2[:])
+	buf.Write(localKeySource.random2[:])
+	//  options string
+	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher AES-128-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
+	lenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(lenBuf, uint16(len(optionsString)+1))
+	buf.Write(lenBuf)
+	buf.WriteString(optionsString)
+	buf.WriteByte(0)
+	//  username and password
+	buf.Write([]byte{0, 0, 0, 0})
+	_, err = tt.conn.Write(buf.Bytes())
+	if err != nil {
+		log.Fatalf("can't send key to remote: %v", err)
+	}
+
+	recvBuf := make([]byte, 1024)
+	_, err = tt.conn.Read(recvBuf)
+	if err != nil {
+		log.Fatalf("can't get key from remote: %v", err)
+	}
+	//copy(remoteKeySource.preMaster[:], recvBuf[5:53])
+	copy(remoteKeySource.random1[:], recvBuf[5:37])
+	copy(remoteKeySource.random2[:], recvBuf[37:69])
+
+	master := make([]byte, 48)
+	prf(localKeySource.preMaster[:], "OpenVPN master secret",
+		localKeySource.random1[:], remoteKeySource.random1[:],
+		nil, nil, master)
+	keyBuf := make([]byte, 256)
+	prf(master, "OpenVPN key expansion",
+		localKeySource.random2[:], remoteKeySource.random2[:],
+		tt.reliableUdp.localSessionId[:], tt.reliableUdp.remoteSessionId[:], keyBuf)
+
+	keys := &key2{}
+	copy(keys.encryptCipher[:], keyBuf[:16])
+	copy(keys.encryptDigest[:], keyBuf[64:84])
+	copy(keys.decryptCipher[:], keyBuf[128:144])
+	copy(keys.decryptDigest[:], keyBuf[192:212])
+	tt.keysChan <- keys
+
+	log.Printf("done negotiate initial keys")
+}
+
+func (tt *tlsTransporter) iterate() bool {
+	time.Sleep(time.Second)
+	return true
 }
 
 type client struct {
@@ -480,8 +608,9 @@ type client struct {
 	plainRecvChan chan []byte
 
 	udpRecv     *udpReceiver
-	dataTrans   *dataTransporter
 	reliableUdp *reliableUdp
+	tlsTrans    *tlsTransporter
+	dataTrans   *dataTransporter
 }
 
 func newClient(peerAddr string) *client {
@@ -512,100 +641,22 @@ func (c *client) start() {
 	}
 	c.udpRecv.start()
 
+	c.reliableUdp = dialReliableUdp(c.conn, ctrlRecvChan)
+
+	keysChan := make(chan *key2, 1)
+	c.tlsTrans = newTlsTransporter(c.reliableUdp, keysChan, nil, nil)
+	c.tlsTrans.start()
+	keys := <-keysChan
+
 	c.dataTrans = &dataTransporter{
 		conn:           c.conn,
 		stopChan:       make(chan struct{}),
 		cipherRecvChan: ciphertextRecvChan,
 		plainSendChan:  c.plainSendChan,
 		plainRecvChan:  c.plainRecvChan,
+		keys:           keys,
 	}
 	c.dataTrans.start()
-
-	c.reliableUdp = dialReliableUdp(c.conn, ctrlRecvChan)
-
-	c.handshake()
-}
-
-func (c *client) handshake() {
-	caCertFileContent, err := ioutil.ReadFile("test/ca.cer")
-	if err != nil {
-		log.Fatalf("can't read ca cert file: %v", err)
-	}
-	caCerts := x509.NewCertPool()
-	ok := caCerts.AppendCertsFromPEM(caCertFileContent)
-	if !ok {
-		log.Fatalf("can't parse ca cert file")
-	}
-
-	clientCert, err := tls.LoadX509KeyPair("test/client.pem", "test/client.pem")
-	if err != nil {
-		log.Fatalf("can't load client cert and key: %v", err)
-	}
-
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{clientCert},
-		RootCAs:            caCerts,
-		InsecureSkipVerify: true,
-	}
-	tlsConn := tls.Client(c.reliableUdp, tlsConfig)
-	err = tlsConn.Handshake()
-	if err != nil {
-		log.Fatalf("can't handshake tls with remote: %v", err)
-	}
-
-	localKeySource := &keySource2{}
-	remoteKeySource := &keySource2{}
-
-	//  openvpn client send key
-	buf := &bytes.Buffer{}
-	//  uint32 0
-	buf.Write([]byte{0, 0, 0, 0})
-	//  key method
-	buf.WriteByte(2)
-	//  key material
-	io.ReadFull(rand.Reader, localKeySource.preMaster[:])
-	buf.Write(localKeySource.preMaster[:])
-	io.ReadFull(rand.Reader, localKeySource.random1[:])
-	buf.Write(localKeySource.random1[:])
-	io.ReadFull(rand.Reader, localKeySource.random2[:])
-	buf.Write(localKeySource.random2[:])
-	//  options string
-	optionsString := "V4,dev-type tun,link-mtu 1541,tun-mtu 1500,proto UDPv4,cipher BF-CBC,auth SHA1,keysize 128,key-method 2,tls-client"
-	lenBuf := make([]byte, 2)
-	binary.BigEndian.PutUint16(lenBuf, uint16(len(optionsString)+1))
-	buf.Write(lenBuf)
-	buf.WriteString(optionsString)
-	buf.WriteByte(0)
-	//  username and password
-	buf.Write([]byte{0, 0, 0, 0})
-	_, err = tlsConn.Write(buf.Bytes())
-	if err != nil {
-		log.Fatalf("can't send key to remote: %v", err)
-	}
-
-	recvBuf := make([]byte, 1024)
-	_, err = tlsConn.Read(recvBuf)
-	if err != nil {
-		log.Fatalf("can't get key from remote: %v", err)
-	}
-	//copy(remoteKeySource.preMaster[:], recvBuf[5:53])
-	copy(remoteKeySource.random1[:], recvBuf[5:37])
-	copy(remoteKeySource.random2[:], recvBuf[37:69])
-
-	master := make([]byte, 48)
-	prf(localKeySource.preMaster[:], "OpenVPN master secret",
-		localKeySource.random1[:], remoteKeySource.random1[:],
-		nil, nil, master)
-	keyBuf := make([]byte, 256)
-	prf(master, "OpenVPN key expansion",
-		localKeySource.random2[:], remoteKeySource.random2[:],
-		c.reliableUdp.localSessionId[:], c.reliableUdp.remoteSessionId[:], keyBuf)
-	c.dataTrans.keys = &key2{}
-	copy(c.dataTrans.keys.encryptCipher[:], keyBuf[:16])
-	copy(c.dataTrans.keys.encryptDigest[:], keyBuf[64:84])
-	copy(c.dataTrans.keys.decryptCipher[:], keyBuf[128:144])
-	copy(c.dataTrans.keys.decryptDigest[:], keyBuf[192:212])
-	log.Printf("done negotiate initial keys")
 
 	for {
 		plain := <-c.plainSendChan
