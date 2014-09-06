@@ -9,23 +9,30 @@ import (
 	"time"
 )
 
+const (
+	kReliableRecvCacheSize = 8
+	kReliableSendAcksCount = 4
+)
+
 type reliableUdp struct {
 	stopChan stopChan
 
-	ctrlSendChan    chan *packet
-	conn            *net.UDPConn
-	sendingPacketId uint32
-	sendingPackets  map[uint32]*packet
+	ctrlSendChan   chan *packet
+	conn           *net.UDPConn
+	sendingPid     uint32
+	sendingPackets map[uint32]*packet
 
 	ctrlRecvChan  <-chan *packet
+	recvedPackets [kReliableRecvCacheSize]*packet
+	recvingPid    uint32
+	acks          ackArray
 	sslRecvChan   chan *packet
 	sslRecvBuf    bytes.Buffer
-	receivingAcks ackArray
 
-	connected       bool
-	keyId           byte
-	localSessionId  sessionId
-	remoteSessionId sessionId
+	connected bool
+	keyId     byte
+	localSid  sessionId
+	remoteSid sessionId
 }
 
 func dialReliableUdp(conn *net.UDPConn, ctrlRecvChan <-chan *packet) *reliableUdp {
@@ -37,7 +44,7 @@ func dialReliableUdp(conn *net.UDPConn, ctrlRecvChan <-chan *packet) *reliableUd
 		ctrlRecvChan:   ctrlRecvChan,
 		sslRecvChan:    make(chan *packet),
 	}
-	io.ReadFull(rand.Reader, ru.localSessionId[:])
+	io.ReadFull(rand.Reader, ru.localSid[:])
 
 	ru.start()
 	ru.ctrlSendChan <- &packet{
@@ -68,32 +75,19 @@ func (ru *reliableUdp) iterate() bool {
 	}
 
 	var ackTimeout <-chan time.Time
-	if len(ru.receivingAcks) > 0 {
+	if len(ru.acks) > 0 {
 		ackTimeout = time.After(time.Microsecond)
 	}
 
 	select {
 	case packet := <-ru.ctrlRecvChan:
-		packet = decodeCtrlPacket(packet)
-		ru.receivingAcks = append(ru.receivingAcks, packet.packetId)
-		for _, ack := range packet.acks {
-			if _, ok := ru.sendingPackets[ack]; ok {
-				delete(ru.sendingPackets, ack)
-			}
-		}
-		switch packet.opCode {
-		case kProtoControlHardResetServerV2:
-			copy(ru.remoteSessionId[:], packet.localSessionId[:])
-			ru.connected = true
-		case kProtoControlV1:
-			ru.sslRecvChan <- packet
-		}
+		ru.recvCtrlPacket(packet)
 
 	case packet := <-ru.ctrlSendChan:
-		packet.packetId = ru.sendingPacketId
-		ru.sendingPacketId++
+		packet.id = ru.sendingPid
+		ru.sendingPid++
 		ru.sendCtrlPacket(packet)
-		ru.sendingPackets[packet.packetId] = packet
+		ru.sendingPackets[packet.id] = packet
 
 	case <-resendTimeout:
 		for _, packet := range ru.sendingPackets {
@@ -107,21 +101,57 @@ func (ru *reliableUdp) iterate() bool {
 	return true
 }
 
-func (ru *reliableUdp) sendCtrlPacket(packet *packet) {
-	copy(packet.localSessionId[:], ru.localSessionId[:])
-	copy(packet.remoteSessionId[:], ru.remoteSessionId[:])
+func (ru *reliableUdp) recvCtrlPacket(packet *packet) {
+	packet = decodeCtrlPacket(packet)
 
-	nAcks := len(ru.receivingAcks)
-	if nAcks > 4 {
-		nAcks = 4
+	for _, ack := range packet.acks {
+		if _, ok := ru.sendingPackets[ack]; ok {
+			delete(ru.sendingPackets, ack)
+		}
 	}
 
-	_, err := ru.conn.Write(encodeCtrlPacket(packet, ru.receivingAcks[:nAcks]))
+	if packet.id-ru.recvingPid >= kReliableRecvCacheSize {
+		return
+	}
+	if ru.recvedPackets[packet.id-ru.recvingPid] != nil {
+		return
+	}
+	ru.recvedPackets[packet.id-ru.recvingPid] = packet
+	ru.acks = append(ru.acks, packet.id)
+
+	switch packet.opCode {
+	case kProtoControlHardResetServerV2:
+		copy(ru.remoteSid[:], packet.localSid[:])
+		ru.connected = true
+
+	case kProtoControlV1:
+		i := 0
+		for ru.recvedPackets[i] != nil {
+			ru.sslRecvChan <- ru.recvedPackets[i]
+			i++
+			ru.recvingPid++
+		}
+		copy(ru.recvedPackets[:kReliableRecvCacheSize-i], ru.recvedPackets[i:])
+	}
+}
+
+func (ru *reliableUdp) sendCtrlPacket(packet *packet) {
+	copy(packet.localSid[:], ru.localSid[:])
+	copy(packet.remoteSid[:], ru.remoteSid[:])
+
+	nAck := len(ru.acks)
+	if nAck > kReliableSendAcksCount {
+		nAck = kReliableSendAcksCount
+	}
+	packet.acks = make(ackArray, nAck)
+	copy(packet.acks, ru.acks)
+
+	_, err := ru.conn.Write(encodeCtrlPacket(packet))
 	if err != nil {
 		log.Fatalf("can't send packet to peer: %v", err)
 	}
 
-	ru.receivingAcks = ru.receivingAcks[nAcks:]
+	ru.acks = ru.acks[nAck:]
 }
 
 func (ru *reliableUdp) Close() error                       { return nil }

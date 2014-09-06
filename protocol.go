@@ -22,13 +22,13 @@ type sessionId [8]byte
 type ackArray []uint32
 
 type packet struct {
-	opCode          byte
-	keyId           byte
-	localSessionId  sessionId
-	acks            ackArray
-	remoteSessionId sessionId
-	packetId        uint32
-	content         []byte
+	opCode    byte
+	keyId     byte
+	localSid  sessionId
+	acks      ackArray
+	remoteSid sessionId
+	id        uint32
+	content   []byte
 }
 
 func decodeCommonHeader(buf []byte) *packet {
@@ -60,29 +60,29 @@ func sendDataPacket(conn *net.UDPConn, packet *packet) {
 	}
 }
 
-func encodeCtrlPacket(packet *packet, acks ackArray) []byte {
+func encodeCtrlPacket(packet *packet) []byte {
 	buf := &bytes.Buffer{}
 
 	//  op code and key id
 	buf.WriteByte((packet.opCode << 3) | (packet.keyId & 0x07))
 
 	//  local session id
-	buf.Write(packet.localSessionId[:])
+	buf.Write(packet.localSid[:])
 
 	//  acks
-	buf.WriteByte(byte(len(acks)))
-	for i := 0; i < len(acks); i++ {
-		bufWriteUint32(buf, acks[i])
+	buf.WriteByte(byte(len(packet.acks)))
+	for i := 0; i < len(packet.acks); i++ {
+		bufWriteUint32(buf, packet.acks[i])
 	}
 
 	//  remote session id
-	if len(acks) > 0 {
-		buf.Write(packet.remoteSessionId[:])
+	if len(packet.acks) > 0 {
+		buf.Write(packet.remoteSid[:])
 	}
 
 	//  packet id
 	if packet.opCode != kProtoAckV1 {
-		bufWriteUint32(buf, packet.packetId)
+		bufWriteUint32(buf, packet.id)
 	}
 
 	//  content
@@ -95,7 +95,7 @@ func decodeCtrlPacket(packet *packet) *packet {
 	buf := bytes.NewBuffer(packet.content)
 
 	//  remote session id
-	_, err := io.ReadFull(buf, packet.localSessionId[:])
+	_, err := io.ReadFull(buf, packet.localSid[:])
 	if err != nil {
 		return nil
 	}
@@ -116,7 +116,7 @@ func decodeCtrlPacket(packet *packet) *packet {
 
 	//  local session id
 	if nAcks > 0 {
-		_, err = io.ReadFull(buf, packet.remoteSessionId[:])
+		_, err = io.ReadFull(buf, packet.remoteSid[:])
 		if err != nil {
 			return nil
 		}
@@ -124,7 +124,7 @@ func decodeCtrlPacket(packet *packet) *packet {
 
 	//  packet id
 	if packet.opCode != kProtoAckV1 {
-		packet.packetId, err = bufReadUint32(buf)
+		packet.id, err = bufReadUint32(buf)
 		if err != nil {
 			return nil
 		}

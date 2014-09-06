@@ -300,7 +300,7 @@ func (tt *tlsTransporter) handshake() {
 	keyBuf := make([]byte, 256)
 	prf(master, "OpenVPN key expansion",
 		localKeySource.random2[:], remoteKeySource.random2[:],
-		tt.reliableUdp.localSessionId[:], tt.reliableUdp.remoteSessionId[:], keyBuf)
+		tt.reliableUdp.localSid[:], tt.reliableUdp.remoteSid[:], keyBuf)
 
 	keys := &keys{}
 	copy(keys.encryptCipher[:], keyBuf[:16])
