@@ -15,7 +15,9 @@ const (
 )
 
 type reliableUdp struct {
-	stopChan chan struct{}
+	stopChan      chan struct{}
+	failChan      <-chan time.Time
+	doneHandshake chan struct{}
 
 	ctrlSendChan chan *packet
 	conn         *net.UDPConn
@@ -37,12 +39,14 @@ type reliableUdp struct {
 
 func dialReliableUdp(conn *net.UDPConn, ctrlRecvChan <-chan *packet) *reliableUdp {
 	ru := &reliableUdp{
-		stopChan:     make(chan struct{}),
-		conn:         conn,
-		ctrlSendChan: make(chan *packet),
-		waitingAck:   make(map[uint32]chan<- struct{}),
-		ctrlRecvChan: ctrlRecvChan,
-		sslRecvChan:  make(chan *packet),
+		stopChan:      make(chan struct{}),
+		failChan:      time.After(time.Minute),
+		doneHandshake: make(chan struct{}),
+		conn:          conn,
+		ctrlSendChan:  make(chan *packet),
+		waitingAck:    make(map[uint32]chan<- struct{}),
+		ctrlRecvChan:  ctrlRecvChan,
+		sslRecvChan:   make(chan *packet),
 	}
 	io.ReadFull(rand.Reader, ru.localSid[:])
 
@@ -78,6 +82,12 @@ func (ru *reliableUdp) iterate() bool {
 	case <-ru.stopChan:
 		return false
 
+	case <-ru.failChan:
+		log.Fatalf("can't negotiate with peer within 60 seconds")
+
+	case <-ru.doneHandshake:
+		ru.failChan = nil
+
 	case packet := <-ru.ctrlRecvChan:
 		ru.recvCtrlPacket(packet)
 
@@ -96,6 +106,10 @@ func (ru *reliableUdp) iterate() bool {
 func (ru *reliableUdp) recvCtrlPacket(packet *packet) {
 	packet = decodeCtrlPacket(packet)
 
+	if packet.opCode != kProtoAckV1 {
+		ru.acks = append(ru.acks, packet.id)
+	}
+
 	for _, ack := range packet.acks {
 		if _, ok := ru.waitingAck[ack]; ok {
 			ru.waitingAck[ack] <- struct{}{}
@@ -110,7 +124,6 @@ func (ru *reliableUdp) recvCtrlPacket(packet *packet) {
 		return
 	}
 	ru.recvedPackets[packet.id-ru.recvingPid] = packet
-	ru.acks = append(ru.acks, packet.id)
 
 	switch packet.opCode {
 	case kProtoControlHardResetServerV2:
@@ -147,6 +160,7 @@ func (ru *reliableUdp) sendCtrlPacket(packet *packet) chan<- struct{} {
 	ru.acks = ru.acks[nAck:]
 
 	if packet.opCode != kProtoAckV1 {
+		packet.acks = nil
 		return startRetrySendCtrlPacket(ru.conn, packet)
 	}
 
@@ -164,14 +178,13 @@ func startRetrySendCtrlPacket(conn *net.UDPConn, packet *packet) chan<- struct{}
 			case <-stopChan:
 				return
 			case <-time.After(time.Duration(i) * time.Second):
-				log.Printf("resend: %#v", packet)
 				_, err := conn.Write(buf)
 				if err != nil {
 					log.Fatalf("can't send packet to peer: %v", err)
 				}
 			}
 		}
-		log.Fatalf("can't negotiate with peer within 60 seconds")
+		log.Fatalf("can't negotiate with peer within 60 seconds: %v", packet.id)
 	}()
 	return stopChan
 }

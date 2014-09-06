@@ -253,6 +253,7 @@ func (tt *tlsTransporter) handshake() {
 	if err != nil {
 		log.Fatalf("can't handshake tls with remote: %v", err)
 	}
+	tt.reliableUdp.doneHandshake <- struct{}{}
 
 	localKeySource := &keySource2{}
 	remoteKeySource := &keySource2{}
@@ -437,5 +438,6 @@ func main() {
 	remoteEndpoint := flag.String("remote", "127.0.0.1:1194", "remote server address and port")
 	flag.Parse()
 	c := newClient(*remoteEndpoint)
+	log.Printf("client start")
 	c.start()
 }
