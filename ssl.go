@@ -113,7 +113,7 @@ func parseOpCodeAndKeyId(buf []byte) *packet {
 	return packet
 }
 
-type key2 struct {
+type keys struct {
 	encryptCipher [16]byte
 	encryptDigest [20]byte
 	decryptCipher [16]byte
@@ -128,7 +128,7 @@ type dataTransporter struct {
 	plainSendChan  chan<- []byte
 	plainRecvChan  <-chan []byte
 
-	keys *key2
+	keys *keys
 }
 
 func (dt *dataTransporter) start() {
@@ -472,12 +472,12 @@ type tlsTransporter struct {
 	reliableUdp *reliableUdp
 	conn        *tls.Conn
 
-	keysChan chan<- *key2
+	keysChan chan<- *keys
 	sendChan <-chan string
 	recvChan chan<- string
 }
 
-func newTlsTransporter(reliableUdp *reliableUdp, keysChan chan<- *key2,
+func newTlsTransporter(reliableUdp *reliableUdp, keysChan chan<- *keys,
 	sendChan <-chan string, recvChan chan<- string) *tlsTransporter {
 
 	return &tlsTransporter{
@@ -585,7 +585,7 @@ func (tt *tlsTransporter) handshake() {
 		localKeySource.random2[:], remoteKeySource.random2[:],
 		tt.reliableUdp.localSessionId[:], tt.reliableUdp.remoteSessionId[:], keyBuf)
 
-	keys := &key2{}
+	keys := &keys{}
 	copy(keys.encryptCipher[:], keyBuf[:16])
 	copy(keys.encryptDigest[:], keyBuf[64:84])
 	copy(keys.decryptCipher[:], keyBuf[128:144])
@@ -643,7 +643,7 @@ func (c *client) start() {
 
 	c.reliableUdp = dialReliableUdp(c.conn, ctrlRecvChan)
 
-	keysChan := make(chan *key2, 1)
+	keysChan := make(chan *keys, 1)
 	c.tlsTrans = newTlsTransporter(c.reliableUdp, keysChan, nil, nil)
 	c.tlsTrans.start()
 	keys := <-keysChan

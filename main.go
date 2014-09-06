@@ -10,7 +10,6 @@ import (
 	"crypto/sha1"
 	"flag"
 	"fmt"
-	"github.com/glacjay/govpn/tun"
 	"hash"
 	"io"
 	"log"
@@ -18,6 +17,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/glacjay/govpn/tun"
 )
 
 var (
@@ -47,7 +48,7 @@ type key struct {
 	hmac   [maxHMacKeyLen]byte
 }
 
-func main() {
+func _main() {
 	flag.Parse()
 
 	var encCipher, decCipher cipher.Block
