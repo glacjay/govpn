@@ -6,8 +6,6 @@ import (
 	"io"
 )
 
-type stopChan chan struct{}
-
 func bufReadUint32(buf *bytes.Buffer) (uint32, error) {
 	var numBuf [4]byte
 	_, err := io.ReadFull(buf, numBuf[:])

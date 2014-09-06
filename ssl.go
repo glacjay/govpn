@@ -83,7 +83,7 @@ type keys struct {
 
 type dataTransporter struct {
 	conn     *net.UDPConn
-	stopChan stopChan
+	stopChan chan struct{}
 
 	cipherRecvChan <-chan *packet
 	plainSendChan  chan<- []byte
@@ -184,7 +184,7 @@ func (dt *dataTransporter) encrypt(plain []byte) []byte {
 }
 
 type tlsTransporter struct {
-	stopChan stopChan
+	stopChan chan struct{}
 
 	reliableUdp *reliableUdp
 	conn        *tls.Conn
@@ -198,7 +198,7 @@ func newTlsTransporter(reliableUdp *reliableUdp, keysChan chan<- *keys,
 	sendChan <-chan string, recvChan chan<- string) *tlsTransporter {
 
 	return &tlsTransporter{
-		stopChan:    make(stopChan),
+		stopChan:    make(chan struct{}),
 		reliableUdp: reliableUdp,
 		keysChan:    keysChan,
 		sendChan:    sendChan,

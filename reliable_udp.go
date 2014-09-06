@@ -15,12 +15,12 @@ const (
 )
 
 type reliableUdp struct {
-	stopChan stopChan
+	stopChan chan struct{}
 
-	ctrlSendChan   chan *packet
-	conn           *net.UDPConn
-	sendingPid     uint32
-	sendingPackets map[uint32]*packet
+	ctrlSendChan chan *packet
+	conn         *net.UDPConn
+	sendingPid   uint32
+	waitingAck   map[uint32]chan<- struct{}
 
 	ctrlRecvChan  <-chan *packet
 	recvedPackets [kReliableRecvCacheSize]*packet
@@ -37,12 +37,12 @@ type reliableUdp struct {
 
 func dialReliableUdp(conn *net.UDPConn, ctrlRecvChan <-chan *packet) *reliableUdp {
 	ru := &reliableUdp{
-		stopChan:       make(chan struct{}),
-		conn:           conn,
-		ctrlSendChan:   make(chan *packet),
-		sendingPackets: make(map[uint32]*packet),
-		ctrlRecvChan:   ctrlRecvChan,
-		sslRecvChan:    make(chan *packet),
+		stopChan:     make(chan struct{}),
+		conn:         conn,
+		ctrlSendChan: make(chan *packet),
+		waitingAck:   make(map[uint32]chan<- struct{}),
+		ctrlRecvChan: ctrlRecvChan,
+		sslRecvChan:  make(chan *packet),
 	}
 	io.ReadFull(rand.Reader, ru.localSid[:])
 
@@ -69,30 +69,22 @@ func (ru *reliableUdp) stop() {
 }
 
 func (ru *reliableUdp) iterate() bool {
-	var resendTimeout <-chan time.Time
-	if len(ru.sendingPackets) > 0 {
-		resendTimeout = time.After(time.Second)
-	}
-
 	var ackTimeout <-chan time.Time
 	if len(ru.acks) > 0 {
 		ackTimeout = time.After(time.Microsecond)
 	}
 
 	select {
+	case <-ru.stopChan:
+		return false
+
 	case packet := <-ru.ctrlRecvChan:
 		ru.recvCtrlPacket(packet)
 
 	case packet := <-ru.ctrlSendChan:
 		packet.id = ru.sendingPid
 		ru.sendingPid++
-		ru.sendCtrlPacket(packet)
-		ru.sendingPackets[packet.id] = packet
-
-	case <-resendTimeout:
-		for _, packet := range ru.sendingPackets {
-			ru.sendCtrlPacket(packet)
-		}
+		ru.waitingAck[packet.id] = ru.sendCtrlPacket(packet)
 
 	case <-ackTimeout:
 		ru.sendCtrlPacket(&packet{opCode: kProtoAckV1})
@@ -105,8 +97,9 @@ func (ru *reliableUdp) recvCtrlPacket(packet *packet) {
 	packet = decodeCtrlPacket(packet)
 
 	for _, ack := range packet.acks {
-		if _, ok := ru.sendingPackets[ack]; ok {
-			delete(ru.sendingPackets, ack)
+		if _, ok := ru.waitingAck[ack]; ok {
+			ru.waitingAck[ack] <- struct{}{}
+			delete(ru.waitingAck, ack)
 		}
 	}
 
@@ -135,7 +128,7 @@ func (ru *reliableUdp) recvCtrlPacket(packet *packet) {
 	}
 }
 
-func (ru *reliableUdp) sendCtrlPacket(packet *packet) {
+func (ru *reliableUdp) sendCtrlPacket(packet *packet) chan<- struct{} {
 	copy(packet.localSid[:], ru.localSid[:])
 	copy(packet.remoteSid[:], ru.remoteSid[:])
 
@@ -152,6 +145,35 @@ func (ru *reliableUdp) sendCtrlPacket(packet *packet) {
 	}
 
 	ru.acks = ru.acks[nAck:]
+
+	if packet.opCode != kProtoAckV1 {
+		return startRetrySendCtrlPacket(ru.conn, packet)
+	}
+
+	return nil
+}
+
+func startRetrySendCtrlPacket(conn *net.UDPConn, packet *packet) chan<- struct{} {
+	stopChan := make(chan struct{})
+	buf := encodeCtrlPacket(packet)
+	go func() {
+		totalSeconds := 0
+		for i := 1; totalSeconds < 60; i *= 2 {
+			totalSeconds += i
+			select {
+			case <-stopChan:
+				return
+			case <-time.After(time.Duration(i) * time.Second):
+				log.Printf("resend: %#v", packet)
+				_, err := conn.Write(buf)
+				if err != nil {
+					log.Fatalf("can't send packet to peer: %v", err)
+				}
+			}
+		}
+		log.Fatalf("can't negotiate with peer within 60 seconds")
+	}()
+	return stopChan
 }
 
 func (ru *reliableUdp) Close() error                       { return nil }
